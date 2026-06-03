@@ -158,8 +158,11 @@ class XuiClient {
       }
       return [];
     } catch (e: any) {
-      console.error('[X-UI] Failed to get inbounds (suppressing for UI):', e?.message || e);
-      this.cookie = ''; // Reset cookie in case it was an expired session
+      console.error('[X-UI Error] Failed to get inbounds:', e?.message || e);
+      if (e.response) {
+        console.error('[X-UI Error Detail] Status:', e.response.status, 'Data:', JSON.stringify(e.response.data));
+      }
+      this.cookie = ''; 
       return [];
     }
   }
@@ -207,14 +210,20 @@ class XuiClient {
 
     if (finalInboundIds.length === 0) {
       if (state.panel.inboundIds && state.panel.inboundIds.length > 0) {
-        finalInboundIds = state.panel.inboundIds;
-      } else if (state.panel.inboundId !== undefined) {
-        finalInboundIds = [state.panel.inboundId];
+        finalInboundIds = state.panel.inboundIds.map(id => Number(id)).filter(id => !isNaN(id));
+      } else if (state.panel.inboundId) {
+        const id = Number(state.panel.inboundId);
+        if (!isNaN(id)) finalInboundIds = [id];
       }
     }
 
     if (finalInboundIds.length === 0) {
-      throw new Error('هیچ شناسه اینباندی (Inbound ID) برای این محصول یا به صورت عمومی تعریف نشده است. لطفا در بخش محصولات یا تنظیمات عمومی آن را وارد کنید.');
+      throw new Error('هیچ شناسه اینباندی (Inbound ID) تعریف نشده است. لطفا در لیست محصولات یا تنظیمات پنل چک کنید.');
+    }
+
+    const primaryInboundId = Number(finalInboundIds[0]);
+    if (isNaN(primaryInboundId)) {
+        throw new Error('شناسه اینباند (Inbound ID) نامعتبر است. باید یک عدد باشد.');
     }
 
     try {
@@ -268,15 +277,16 @@ class XuiClient {
         enable: true,
         expiryTime: expiryTime,
         total: totalBytes,
+        totalGB: totalBytes,
         limitIp: Number(limitIp) || 0,
         flow: "",
         tgId: telegramId || "",
         subId: subId
       };
 
-      // Add "Attached inbounds" tags if found
+      // Add "Attached inbounds" tags using specifically 'inboundTags' field
       if (otherTags.length > 0) {
-        console.log(`[X-UI] Attaching extra inbounds by tags: ${JSON.stringify(otherTags)}`);
+        console.log(`[X-UI Debug] Attaching extra inbounds by tags: ${JSON.stringify(otherTags)}`);
         clientObj.inboundTags = otherTags;
       }
 
@@ -284,7 +294,8 @@ class XuiClient {
         clients: [clientObj]
       };
 
-      console.log(`[X-UI] Adding client "${email}" to inbound ID ${primaryInboundId}...`);
+      console.log(`[X-UI Debug] Final Primary Inbound ID: ${primaryInboundId}`);
+      console.log(`[X-UI Debug] Payload being sent:`, JSON.stringify(settings));
       
       const possibleUrls = [
         `${opts.baseURL}/panel/api/inbounds/addClient`,
@@ -293,13 +304,14 @@ class XuiClient {
         `${opts.baseURL}/panel/api/inbounds/client/add`,
       ];
 
-      let lastResponse: any = null;
-      let success = false;
-
+      let lastError: any = null;
       for (const url of possibleUrls) {
         try {
-          const res = await this.client.post(url, {
-            id: primaryInboundId,
+          usedUrl = url;
+          console.log(`[X-UI Attempt] Sending POST to: ${url} with Inbound ID: ${primaryInboundId}`);
+          
+          let res = await this.client.post(url, {
+            id: Number(primaryInboundId),
             settings: JSON.stringify(settings)
           }, {
             headers: { ...opts.headers, 'Content-Type': 'application/json' },
@@ -307,21 +319,38 @@ class XuiClient {
           });
           
           lastResponse = res;
-          if (res.data?.success) {
-            console.log(`[X-UI] Successfully added to inbound ${primaryInboundId} using ${url}`);
+          console.log(`[X-UI Response] URL: ${url} | Status: ${res?.status} | Data:`, JSON.stringify(res?.data));
+
+          if (res?.data?.success) {
             success = true;
             break;
-          } else {
-            console.warn(`[X-UI Warn] Panel returned unsuccessful for ${url}:`, JSON.stringify(res.data));
+          }
+
+          // Fallback: Try with settings as an object (not stringified)
+          console.log(`[X-UI Info] Trying with object settings fallback...`);
+          res = await this.client.post(url, {
+            id: Number(primaryInboundId),
+            settings: settings
+          }, {
+            headers: { ...opts.headers, 'Content-Type': 'application/json' },
+            validateStatus: () => true
+          });
+          if (res?.data?.success) {
+            success = true;
+            break;
           }
         } catch (err: any) {
-          if (err.response && err.response.status === 404) continue;
-          console.error(`[X-UI Error] Failed adding to ${primaryInboundId} at ${url}:`, err.message);
+          lastError = err;
+          console.error(`[X-UI Loop Error] URL ${url} failed:`, err.message);
         }
       }
 
       if (!success) {
-        const errorMsg = lastResponse?.data?.msg || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند. ممکن است آیدی اینباند اشتباه باشد.';
+        let errorMsg = lastResponse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.';
+        if (lastResponse?.status === 404) errorMsg = 'آدرس API پنل پیدا نشد (404). لطفا آدرس پنل را چک کنید.';
+        if (lastResponse?.status === 401 || lastResponse?.status === 403) errorMsg = 'خطای دسترسی (401/403). کلید API یا نام کاربری اشتباه است.';
+        
+        console.error(`[X-UI Fatal] All URLs failed. Msg: ${errorMsg}`);
         throw new Error(errorMsg);
       }
 

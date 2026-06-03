@@ -473,7 +473,17 @@ function SettingsView() {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700">اینباندهای پیش‌فرض پنل (Global Inbounds)</label>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <label className="block text-sm font-medium text-slate-700">اینباندهای پیش‌فرض پنل (Global Inbounds)</label>
+              <button 
+                onClick={loadInbounds} 
+                className="flex items-center gap-1 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded border transition-colors"
+                title="تازه سازی لیست از پنل"
+              >
+                <RefreshCw className="w-3 h-3" />
+                به‌روزرسانی لیست
+              </button>
+            </div>
             <p className="text-[11px] text-slate-400 mb-2">در صورتی که محصولی اینباند اختصاصی نداشته باشد، از این لیست به عنوان پیش‌فرض استفاده می‌شود.</p>
             
             {inbounds.length > 0 ? (
@@ -523,7 +533,6 @@ function SettingsView() {
                     placeholder="شناسه عددی اینباند (مثلا 1)" 
                   />
                 </div>
-                <button onClick={loadInbounds} className="bg-slate-100 text-slate-800 px-4 py-2 rounded-md hover:bg-slate-200 transition font-medium text-sm border whitespace-nowrap">دریافت لیست اینباندها</button>
               </div>
             )}
           </div>
