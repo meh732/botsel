@@ -9,11 +9,37 @@ A comprehensive solution to automate X-UI (Sanaei) VPN account distribution via 
 - Backup and restore directly from Telegram bot (`db.json` file)
 - Modern, professional UI web dashboard
 
+## 📤 نحوه آپلود و بروزرسانی پروژه در گیت‌هاب (Push to GitHub)
+
+برای اینکه بتوانید دستور نصب تک‌خطی زیر را روی سرور خود اجرا کنید، ابتدا باید آخرین کد ادیت شده‌ی ربات خود را در گیت‌هاب آپلود (Push) کنید. مراحل زیر را در کامپیوتر شخصی خود انجام دهید:
+
+1. **دانلود فایل پروژه:** از منوی تنظیمات (چرخ‌دنده بالا سمت راست در این محیط ویرایشگر) گزینه **"Export as ZIP"** را بزنید تا کل فایل‌های پروژه به صورت فشرده دانلود شوند.
+2. **استخراج فایل:** فایل ZIP دانلود شده را در یک پوشه فرستاده و استخراج (unzip) کنید.
+3. **باز کردن ترمینال (یا گیت‌بش):** ترمینال سورس را در پوشه استخراج شده باز کنید و دستورات زیر را ترتیب وارد کنید:
+   ```bash
+   # مقداردهی اولیه ریپازیتوری
+   git init
+
+   # اد کردن لینک ریپازیتوری خودتان
+   git remote add origin https://github.com/meh732/botsel.git
+
+   # اضافه کردن تمام فایل‌ها به استیج گیت
+   git add .
+
+   # ثبت کامیت تغییرات با نام دلخواه
+   git commit -m "Update robot and web admin control features"
+
+   # ارسال کدها به برنچ اصلی گیت‌هاب
+   git branch -M main
+   git push -u origin main --force
+   ```
+*(نکته: در صورتی که پسورد گیت‌هاب خواست، باید از رمز عبور توکن توسعه‌دهنده یا GitHub Personal Access Token استفاده کنید).*
+
 ## 🚀 Installation on VPS (Linux Ubuntu/Debian)
 
-Use the automated one-line setup command on your fresh Linux VPS:
+Use the automated one-line setup command on your fresh Linux VPS to download from your botsel repository:
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/install.sh && sudo bash install.sh
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/meh732/botsel/main/install.sh)
 ```
 
 *(If you haven't uploaded this to GitHub yet, clone the repo manually, then run `sudo bash install.sh` inside the folder).*

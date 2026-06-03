@@ -102,6 +102,27 @@ async function startServer() {
     res.json({ success: true, balance: user.balance });
   });
 
+  api.post("/users/:chatId/role", (req, res) => {
+    const { isSeller } = req.body;
+    const user = db.getUser(parseInt(req.params.chatId));
+    if (!user) return res.status(404).json({ success: false });
+    user.isSeller = isSeller;
+    if (isSeller && user.debt === undefined) {
+      user.debt = 0;
+      user.totalSales = 0;
+    }
+    db.saveUser(user);
+    res.json({ success: true });
+  });
+
+  api.post("/users/:chatId/settle", (req, res) => {
+    const user = db.getUser(parseInt(req.params.chatId));
+    if (!user) return res.status(404).json({ success: false });
+    user.debt = 0;
+    db.saveUser(user);
+    res.json({ success: true, debt: user.debt });
+  });
+
   app.use("/api", api);
 
   // Vite middleware for development

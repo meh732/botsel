@@ -24,6 +24,9 @@ export interface User {
   registeredAt: string;
   referredBy?: number;
   referralsMade?: number;
+  isSeller?: boolean;
+  debt?: number;
+  totalSales?: number;
 }
 
 export interface AppState {

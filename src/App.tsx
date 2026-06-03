@@ -287,44 +287,86 @@ function UsersView() {
     }
   };
 
+  const toggleSeller = async (chatId: number, currentStatus: boolean) => {
+    if(!confirm(`آیا از تغییر نقش این کاربر به ${currentStatus ? 'کاربر عادی' : 'فروشنده'} مطمئن هستید؟`)) return;
+    const res = await fetch(`/api/users/${chatId}/role`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ isSeller: !currentStatus })
+    });
+    const data = await res.json();
+    if(data.success) {
+      setUsers(users.map(u => u.chatId === chatId ? {...u, isSeller: !currentStatus, debt: !currentStatus ? (u.debt || 0) : u.debt} : u));
+    }
+  };
+
+  const settleDebt = async (chatId: number) => {
+    if(!confirm('آیا از صفر کردن بدهی این فروشنده مطمئن هستید؟ (تسویه حساب)')) return;
+    const res = await fetch(`/api/users/${chatId}/settle`, { method: 'POST' });
+    const data = await res.json();
+    if(data.success) {
+      setUsers(users.map(u => u.chatId === chatId ? {...u, debt: 0} : u));
+    }
+  };
+
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto" dir="rtl">
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        <table className="w-full text-left">
+        <table className="w-full text-right">
           <thead className="bg-slate-50 border-b">
             <tr>
-              <th className="px-6 py-4 font-semibold text-slate-600">User / Chat ID</th>
-              <th className="px-6 py-4 font-semibold text-slate-600">Balance</th>
-              <th className="px-6 py-4 font-semibold text-slate-600">Free Test</th>
-              <th className="px-6 py-4 font-semibold text-slate-600">Registered</th>
-              <th className="px-6 py-4 font-semibold text-slate-600 text-right">Actions</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">کاربر / آیدی</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">نقش</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">موجودی / بدهی</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">تاریخ ثبت نام</th>
+              <th className="px-6 py-4 font-semibold text-slate-600 text-left">عملیات</th>
             </tr>
           </thead>
           <tbody>
             {users.map(u => (
               <tr key={u.chatId} className="border-b last:border-0 hover:bg-slate-50 transition">
                 <td className="px-6 py-4">
-                  <div className="font-medium text-slate-900">{u.username ? `@${u.username}` : 'No Username'}</div>
-                  <div className="text-sm text-slate-500 font-mono">{u.chatId}</div>
+                  <div className="font-medium text-slate-900" dir="ltr">{u.username ? `@${u.username}` : 'No Username'}</div>
+                  <div className="text-sm text-slate-500 font-mono" dir="ltr">{u.chatId}</div>
                 </td>
-                <td className="px-6 py-4 font-mono text-emerald-600 font-semibold">{u.balance.toLocaleString()} T</td>
                 <td className="px-6 py-4">
-                  {u.testUsed ? (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">Used</span>
+                  {u.isSeller ? (
+                    <div>
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700 mb-1">فروشنده</span>
+                    </div>
                   ) : (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">Available</span>
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600">کاربر عادی</span>
                   )}
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-500">{new Date(u.registeredAt).toLocaleDateString()}</td>
-                <td className="px-6 py-4 text-right">
-                  <button onClick={() => charge(u.chatId)} className="inline-flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md font-medium text-sm transition">
-                    <BatteryCharging className="w-4 h-4 mr-1" /> Charge
+                <td className="px-6 py-4">
+                  {u.isSeller ? (
+                     <div>
+                       <div className="text-sm font-bold text-red-600">بدهی: {(u.debt || 0).toLocaleString()} ت</div>
+                       <div className="text-xs text-slate-500 mt-1">فروش: {(u.totalSales || 0).toLocaleString()} ت</div>
+                     </div>
+                  ) : (
+                     <div className="font-mono text-emerald-600 font-semibold text-sm">{(u.balance || 0).toLocaleString()} ت</div>
+                  )}
+                </td>
+                <td className="px-6 py-4 text-sm text-slate-500">{new Date(u.registeredAt).toLocaleDateString('fa-IR')}</td>
+                <td className="px-6 py-4 text-left flex items-center justify-end gap-2">
+                  <button onClick={() => toggleSeller(u.chatId, !!u.isSeller)} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-medium text-xs transition">
+                    تغییر نقش
                   </button>
+                  {u.isSeller ? (
+                     <button onClick={() => settleDebt(u.chatId)} className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md font-medium text-xs transition">
+                       تسویه حساب
+                     </button>
+                  ) : (
+                     <button onClick={() => charge(u.chatId)} className="inline-flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md font-medium text-xs transition">
+                       <BatteryCharging className="w-4 h-4 ml-1" /> شارژ موجودی
+                     </button>
+                  )}
                 </td>
               </tr>
             ))}
             {users.length === 0 && (
-              <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">No users have started the bot yet.</td></tr>
+              <tr><td colSpan={5} className="px-6 py-8 text-center text-slate-500">هنوز کاربری ثبت نشده است.</td></tr>
             )}
           </tbody>
         </table>

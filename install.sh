@@ -13,12 +13,17 @@ echo ">> Installing Node.js..."
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs git
 
-echo ">> Please enter your GitHub Repository URL (or press enter if already in the repo directory):"
-read GIT_URL
+GIT_URL="https://github.com/meh732/botsel.git"
+DIR_NAME="botsel"
 
-if [ ! -z "$GIT_URL" ]; then
-   git clone "$GIT_URL" sanaei-bot
-   cd sanaei-bot
+echo ">> Cloning repository from $GIT_URL..."
+if [ -d "$DIR_NAME" ]; then
+  echo "Directory $DIR_NAME already exists. Pulling latest changes..."
+  cd "$DIR_NAME"
+  git pull
+else
+  git clone "$GIT_URL" "$DIR_NAME"
+  cd "$DIR_NAME"
 fi
 
 echo ">> Installing dependencies..."
