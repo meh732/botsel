@@ -89,7 +89,7 @@ async function startServer() {
   });
 
   api.post("/update-panel", async (req, res) => {
-    const { url, username, password, inboundId, apiKey } = req.body;
+    const { url, username, password, inboundId, inboundIds, apiKey } = req.body;
     const currentState = db.getState();
     
     const newPanel = { ...currentState.panel };
@@ -97,6 +97,11 @@ async function startServer() {
     if (username !== undefined) newPanel.username = username;
     if (password && password !== '********') newPanel.password = password;
     if (inboundId !== undefined) newPanel.inboundId = parseInt(inboundId) || undefined;
+    if (inboundIds !== undefined) {
+      newPanel.inboundIds = Array.isArray(inboundIds)
+        ? inboundIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
+        : [];
+    }
     if (apiKey !== undefined) newPanel.apiKey = apiKey;
 
     db.updateState({ panel: newPanel });

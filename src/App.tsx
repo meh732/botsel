@@ -472,12 +472,60 @@ function SettingsView() {
             <input type="text" value={state.panel.apiKey || ''} onChange={e => setState({...state, panel: {...state.panel, apiKey: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-left" dir="ltr" placeholder="vXg7hY..." />
           </div>
 
-          <div className="flex items-end gap-4">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-slate-700 mb-1">شناسه عددی Inbound مدنظر</label>
-              <input type="number" value={state.panel.inboundId || ''} onChange={e => setState({...state, panel: {...state.panel, inboundId: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono" placeholder="مثلاً 1" />
-            </div>
-            <button onClick={loadInbounds} className="bg-slate-100 text-slate-800 px-4 py-2 rounded-md hover:bg-slate-200 transition font-medium text-sm border">دریافت لیست اینباندها</button>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-slate-700">اینباندهای پیش‌فرض پنل (Global Inbounds)</label>
+            <p className="text-[11px] text-slate-400 mb-2">در صورتی که محصولی اینباند اختصاصی نداشته باشد، از این لیست به عنوان پیش‌فرض استفاده می‌شود.</p>
+            
+            {inbounds.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 p-3 bg-slate-50 rounded-lg border max-h-48 overflow-y-auto">
+                {inbounds.map((ib: any) => {
+                  const isChecked = (state.panel.inboundIds || []).includes(ib.id) || (state.panel.inboundId === ib.id);
+                  return (
+                    <label key={ib.id} className="flex items-center gap-2 text-sm text-slate-700 hover:text-indigo-600 cursor-pointer select-none">
+                      <input 
+                        type="checkbox" 
+                        checked={isChecked}
+                        onChange={e => {
+                          let updatedIds = [...(state.panel.inboundIds || [])];
+                          if (state.panel.inboundId && !updatedIds.includes(state.panel.inboundId)) {
+                            updatedIds.push(state.panel.inboundId);
+                          }
+                          if (e.target.checked) {
+                            if (!updatedIds.includes(ib.id)) updatedIds.push(ib.id);
+                          } else {
+                            updatedIds = updatedIds.filter(id => id !== ib.id);
+                          }
+                          setState({
+                            ...state,
+                            panel: {
+                              ...state.panel,
+                              inboundIds: updatedIds,
+                              inboundId: updatedIds[0] || undefined
+                            }
+                          });
+                        }}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="font-medium text-slate-800">{ib.remark}</span>
+                      <span className="text-xs text-slate-500 font-mono bg-slate-200 px-1.5 py-0.5 rounded">ID: {ib.id}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex items-end gap-4">
+                <div className="flex-1">
+                  <input 
+                    type="number" 
+                    value={state.panel.inboundId || ''} 
+                    onChange={e => setState({...state, panel: {...state.panel, inboundId: e.target.value}})} 
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-sm" 
+                    placeholder="شناسه عددی اینباند (مثلا 1)" 
+                  />
+                </div>
+                <button onClick={loadInbounds} className="bg-slate-100 text-slate-800 px-4 py-2 rounded-md hover:bg-slate-200 transition font-medium text-sm border whitespace-nowrap">دریافت لیست اینباندها</button>
+              </div>
+            )}
           </div>
 
           {inbounds.length > 0 && (

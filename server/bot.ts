@@ -108,7 +108,7 @@ export async function initBot() {
         ? product.inboundIds
         : (product.inboundId ? [product.inboundId] : undefined);
 
-      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, selectedInboundIds, product.limitIp || 0);
+      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, selectedInboundIds, product.limitIp || 0, String(chatId));
       
       if (user.isSeller) {
         user.debt = (user.debt || 0) + finalPrice;
@@ -929,7 +929,7 @@ export async function initBot() {
           ? state.freeTestInboundIds
           : (state.freeTestInboundId ? [state.freeTestInboundId] : undefined);
 
-        const client = await xui.addClient(`test_${chatId}`, state.freeTestVolumeGb, state.freeTestDurationDays, testInboundIds, 1); // 1 IP limit for free test
+        const client = await xui.addClient(`test_${chatId}`, state.freeTestVolumeGb, state.freeTestDurationDays, testInboundIds, 1, String(chatId));
         
         user.testUsed = true;
         db.saveUser(user);

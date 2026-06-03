@@ -6,6 +6,7 @@ export interface PanelConfig {
   username?: string;
   password?: string;
   inboundId?: number;
+  inboundIds?: number[];
   apiKey?: string;
 }
 

@@ -45,13 +45,14 @@ class XuiClient {
     }
 
     if (panel.apiKey) {
+      const apiKey = panel.apiKey.trim();
       console.log(`[X-UI] Authenticating using API Key with baseURL: ${baseURL}`);
       return {
         baseURL,
         headers: {
-          'Api-Key': panel.apiKey.trim(),
-          'X-Api-Key': panel.apiKey.trim(),
-          'Authorization': `Bearer ${panel.apiKey.trim()}`,
+          'Api-Key': apiKey,
+          'X-Api-Key': apiKey,
+          'Authorization': `Bearer ${apiKey}`,
           'Accept': 'application/json, text/plain, */*'
         }
       };
@@ -190,13 +191,13 @@ class XuiClient {
     }
   }
 
-  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: number | number[], limitIp: number = 0) {
+  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: number | number[], limitIp: number = 0, telegramId?: string) {
     const state = db.getState();
     let finalInboundIds: number[] = [];
 
     if (Array.isArray(targetInboundIds) && targetInboundIds.length > 0) {
       finalInboundIds = targetInboundIds;
-      console.log(`[X-UI] Multi-inbound request: Adding client to all IDs: ${JSON.stringify(finalInboundIds)}`);
+      console.log(`[X-UI] Target Inbound IDs: ${JSON.stringify(finalInboundIds)}`);
     } else if (typeof targetInboundIds === 'number' && !isNaN(targetInboundIds)) {
       finalInboundIds = [targetInboundIds];
     } else if (typeof targetInboundIds === 'string' && targetInboundIds) {
@@ -204,19 +205,23 @@ class XuiClient {
       if (!isNaN(parsed)) finalInboundIds = [parsed];
     }
 
-    if (finalInboundIds.length === 0 && state.panel.inboundId !== undefined) {
-      finalInboundIds = [state.panel.inboundId];
+    if (finalInboundIds.length === 0) {
+      if (state.panel.inboundIds && state.panel.inboundIds.length > 0) {
+        finalInboundIds = state.panel.inboundIds;
+      } else if (state.panel.inboundId !== undefined) {
+        finalInboundIds = [state.panel.inboundId];
+      }
     }
 
     if (finalInboundIds.length === 0) {
-      throw new Error('هیچ شناسه اینباندی (Inbound ID) برای این محصول یا به صورت عمومی تعریف نشده است. لطفا در پنل مدیریت تنظیم کنید.');
+      throw new Error('هیچ شناسه اینباندی (Inbound ID) برای این محصول یا به صورت عمومی تعریف نشده است. لطفا در بخش محصولات یا تنظیمات عمومی آن را وارد کنید.');
     }
 
     try {
       const opts = await this.getAuthOptions();
       
-      // Fetch inbounds once for validation and duplicate scanning
-      let inboundsList: any[] = await this.getInbounds() || [];
+      // Fetch inbounds once for tags and duplicate scanning
+      const inboundsList: any[] = await this.getInbounds() || [];
 
       // 1. Scan and delete existing client with the same email in ALL discovered inbounds to prevent duplication
       if (inboundsList && inboundsList.length > 0) {
@@ -227,7 +232,7 @@ class XuiClient {
               if (parsedSettings && parsedSettings.clients) {
                 const found = parsedSettings.clients.find((c: any) => c.email === email);
                 if (found) {
-                  console.log(`[X-UI] Found existing client with email "${email}" in inbound ${inbound.id}. Deleting...`);
+                  console.log(`[X-UI] Found existing client "${email}" in inbound ${inbound.id}. Deleting...`);
                   await this.delClient(inbound.id, found.id || found.password);
                 }
               }
@@ -244,68 +249,80 @@ class XuiClient {
       const clientId = uuidv4();
       const subId = uuidv4().replace(/-/g, '').substring(0, 16);
 
-      const settings = {
-        clients: [
-          {
-            id: clientId,
-            password: clientId,
-            email: email,
-            enable: true,
-            expiryTime: expiryTime,
-            totalGB: totalBytes, // Some panels
-            total: totalBytes,   // Most standard 3x-ui panels
-            limitIp: Number(limitIp) || 0,
-            flow: "",
-            tgId: "",
-            subId: subId
+      // Multi-Inbound Tags Support (for newer MHSanaei 3x-ui versions)
+      const primaryInboundId = finalInboundIds[0];
+      const otherTags: string[] = [];
+      if (finalInboundIds.length > 1 && inboundsList.length > 0) {
+        finalInboundIds.slice(1).forEach(id => {
+          const found = inboundsList.find(ib => Number(ib.id) === Number(id));
+          if (found && found.remark) {
+            otherTags.push(found.remark);
           }
-        ]
+        });
+      }
+
+      const clientObj: any = {
+        id: clientId,
+        password: clientId,
+        email: email,
+        enable: true,
+        expiryTime: expiryTime,
+        total: totalBytes,
+        limitIp: Number(limitIp) || 0,
+        flow: "",
+        tgId: telegramId || "",
+        subId: subId
       };
 
-      // 2. Add client to EACH requested inbound
-      const addedTo: number[] = [];
-      for (const ibId of finalInboundIds) {
-        // Find if it exists in panel list (optional validation)
-        if (inboundsList.length > 0 && !inboundsList.find(ib => Number(ib.id) === Number(ibId))) {
-          console.warn(`[X-UI Warn] Inbound ID ${ibId} not found in panel, skipping...`);
-          continue;
-        }
+      // Add "Attached inbounds" tags if found
+      if (otherTags.length > 0) {
+        console.log(`[X-UI] Attaching extra inbounds by tags: ${JSON.stringify(otherTags)}`);
+        clientObj.inboundTags = otherTags;
+      }
 
-        console.log(`[X-UI] Attempting to add client to inbound ID ${ibId}...`);
-        
-        let success = false;
-        const possibleUrls = [
-          `${opts.baseURL}/panel/api/inbounds/addClient`,
-          `${opts.baseURL}/panel/api/inbounds/addclient`,
-          `${opts.baseURL}/api/inbounds/addClient`,
-          `${opts.baseURL}/panel/api/inbounds/client/add`,
-        ];
+      const settings = {
+        clients: [clientObj]
+      };
 
-        for (const url of possibleUrls) {
-          try {
-            const res = await this.client.post(url, {
-              id: ibId,
-              settings: JSON.stringify(settings)
-            }, {
-              headers: { ...opts.headers, 'Content-Type': 'application/json' }
-            });
-            
-            if (res.data?.success) {
-              console.log(`[X-UI] Successfully added to inbound ${ibId} using ${url}`);
-              success = true;
-              addedTo.push(ibId);
-              break;
-            }
-          } catch (err: any) {
-            if (err.response && err.response.status === 404) continue;
-            console.error(`[X-UI Error] Failed adding to ${ibId} at ${url}:`, err.message);
-            // If it's the last URL and we still fail, we just log and move to next inbound
+      console.log(`[X-UI] Adding client "${email}" to inbound ID ${primaryInboundId}...`);
+      
+      const possibleUrls = [
+        `${opts.baseURL}/panel/api/inbounds/addClient`,
+        `${opts.baseURL}/panel/api/inbounds/addclient`,
+        `${opts.baseURL}/api/inbounds/addClient`,
+        `${opts.baseURL}/panel/api/inbounds/client/add`,
+      ];
+
+      let lastResponse: any = null;
+      let success = false;
+
+      for (const url of possibleUrls) {
+        try {
+          const res = await this.client.post(url, {
+            id: primaryInboundId,
+            settings: JSON.stringify(settings)
+          }, {
+            headers: { ...opts.headers, 'Content-Type': 'application/json' },
+            validateStatus: () => true
+          });
+          
+          lastResponse = res;
+          if (res.data?.success) {
+            console.log(`[X-UI] Successfully added to inbound ${primaryInboundId} using ${url}`);
+            success = true;
+            break;
+          } else {
+            console.warn(`[X-UI Warn] Panel returned unsuccessful for ${url}:`, JSON.stringify(res.data));
           }
+        } catch (err: any) {
+          if (err.response && err.response.status === 404) continue;
+          console.error(`[X-UI Error] Failed adding to ${primaryInboundId} at ${url}:`, err.message);
         }
       }
 
-      if (addedTo.length === 0) {
-        throw new Error('ساخت اکانت در هیچ‌کدام از اینباندهای انتخابی موفقیت‌آمیز نبود. لطفا شناسه اینباندها و دسترسی پنل را چک کنید.');
+      if (!success) {
+        const errorMsg = lastResponse?.data?.msg || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند. ممکن است آیدی اینباند اشتباه باشد.';
+        throw new Error(errorMsg);
       }
 
       const subPath = state.panel.url.endsWith('/') ? state.panel.url : state.panel.url + '/';
