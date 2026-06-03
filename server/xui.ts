@@ -180,10 +180,26 @@ class XuiClient {
     }
   }
 
-  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundId?: number) {
+  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: number | number[]) {
     const state = db.getState();
-    const finalInboundId = targetInboundId || state.panel.inboundId;
-    if (!finalInboundId) {
+    let finalInboundId: number | undefined;
+
+    if (Array.isArray(targetInboundIds) && targetInboundIds.length > 0) {
+      // Pick one randomly for automatic load balancing
+      const idx = Math.floor(Math.random() * targetInboundIds.length);
+      finalInboundId = targetInboundIds[idx];
+      console.log(`[X-UI] Multiple target inbound IDs provided: ${JSON.stringify(targetInboundIds)}. Randomly selected ID: ${finalInboundId}`);
+    } else if (typeof targetInboundIds === 'number') {
+      finalInboundId = targetInboundIds;
+    } else if (typeof targetInboundIds === 'string' && targetInboundIds) {
+      finalInboundId = parseInt(targetInboundIds);
+    }
+
+    if (!finalInboundId || isNaN(finalInboundId)) {
+      finalInboundId = state.panel.inboundId;
+    }
+
+    if (!finalInboundId || isNaN(finalInboundId)) {
       throw new Error('هیچ شناسه اینباندی (Inbound ID) برای این محصول یا به صورت عمومی تعریف نشده است. لطفا در پنل مدیریت تنظیم کنید.');
     }
 
@@ -232,12 +248,18 @@ class XuiClient {
         ]
       };
 
+      console.log(`[X-UI] Adding client "${email}" to inbound ID ${finalInboundId}...`);
       const res = await this.client.post(`${opts.baseURL}/panel/api/inbounds/addClient`, {
         id: finalInboundId,
         settings: JSON.stringify(settings)
       }, {
-        headers: opts.headers
+        headers: {
+          ...opts.headers,
+          'Content-Type': 'application/json'
+        }
       });
+
+      console.log(`[X-UI] addClient response code: ${res.status}, data:`, JSON.stringify(res.data));
 
       if (res.data?.success) {
         // Return subscription link format (standard 3x-ui sub link structure)
@@ -248,12 +270,18 @@ class XuiClient {
           subUrl: `${subPath}sub/${settings.clients[0].subId}`
         };
       } else {
-        throw new Error(res.data?.msg || 'Panel returned unsuccessful response when adding client.');
+        throw new Error(res.data?.msg || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.');
       }
     } catch (e: any) {
       console.error('Failed to add client to XUI:', e?.message || e);
+      let errorMsg = e?.message || 'در ساخت اکانت خطایی رخ داد. اتصال، آدرس، پورت یا شناسه اینباند را چک کنید.';
+      if (e.response) {
+        const details = typeof e.response.data === 'object' ? JSON.stringify(e.response.data) : String(e.response.data);
+        console.error('XUI error response details:', e.response.status, details);
+        errorMsg += ` (وضعیت وب‌سرور پنل: ${e.response.status}, جزئیات: ${details})`;
+      }
       this.cookie = '';
-      throw new Error(e?.message || 'Could not add client. Check connection or inbound ID.');
+      throw new Error(errorMsg);
     }
   }
 }

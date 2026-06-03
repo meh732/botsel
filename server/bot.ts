@@ -104,7 +104,11 @@ export async function initBot() {
     bot!.sendMessage(chatId, `⏳ در حال خرید ${product.name} و ساخت کانفیگ...`);
     
     try {
-      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, product.inboundId);
+      const selectedInboundIds = (product.inboundIds && product.inboundIds.length > 0)
+        ? product.inboundIds
+        : (product.inboundId ? [product.inboundId] : undefined);
+
+      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, selectedInboundIds);
       
       if (user.isSeller) {
         user.debt = (user.debt || 0) + finalPrice;
@@ -921,7 +925,11 @@ export async function initBot() {
       bot!.sendMessage(chatId, '⏳ در حال ساخت اکانت تست شما...');
       try {
         const state = db.getState();
-        const client = await xui.addClient(`test_${chatId}`, state.freeTestVolumeGb, state.freeTestDurationDays);
+        const testInboundIds = (state.freeTestInboundIds && state.freeTestInboundIds.length > 0)
+          ? state.freeTestInboundIds
+          : (state.freeTestInboundId ? [state.freeTestInboundId] : undefined);
+
+        const client = await xui.addClient(`test_${chatId}`, state.freeTestVolumeGb, state.freeTestDurationDays, testInboundIds);
         
         user.testUsed = true;
         db.saveUser(user);

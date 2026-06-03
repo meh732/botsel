@@ -16,6 +16,7 @@ export interface Product {
   volumeGb: number; // Gigabytes
   durationDays: number;
   inboundId?: number;
+  inboundIds?: number[];
 }
 
 export interface Purchase {
@@ -56,6 +57,7 @@ export interface AppState {
   freeTestDurationDays: number;
   freeTestEnabled: boolean;
   freeTestInboundId?: number;
+  freeTestInboundIds?: number[];
   adminIds: number[];
   referralRewardToman: number;
   cardNumber?: string;

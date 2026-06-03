@@ -183,6 +183,16 @@ function SettingsView() {
           setAdminIdsStr(data.adminIds.join(', '));
         }
       });
+
+    // Prefetch inbounds automatically on mount if connected
+    fetch('/api/xui-inbounds')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          setInbounds(data.inbounds || []);
+        }
+      })
+      .catch(e => console.log('Could not prefetch panel inbounds:', e));
   }, []);
 
   if (!state) return <div className="text-center p-8">Loading...</div>;
@@ -206,6 +216,7 @@ function SettingsView() {
         freeTestDurationDays: Number(state.freeTestDurationDays),
         freeTestEnabled: state.freeTestEnabled !== false,
         freeTestInboundId: state.freeTestInboundId ? Number(state.freeTestInboundId) : undefined,
+        freeTestInboundIds: state.freeTestInboundIds || [],
         supportUsername: state.supportUsername,
         referralRewardToman: Number(state.referralRewardToman) || 0,
         cardNumber: state.cardNumber,
@@ -364,15 +375,46 @@ function SettingsView() {
                 <option value="false">غیرفعال (خاموش)</option>
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">شناسه اینباند اکانت تست</label>
-              <input 
-                type="number" 
-                value={state.freeTestInboundId || ''} 
-                onChange={e => setState({...state, freeTestInboundId: e.target.value ? Number(e.target.value) : undefined})} 
-                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono" 
-                placeholder="خالی = همان اینباند عمومی"
-              />
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-slate-700 mb-2">اینباندهای منتخب اکانت تست (می‌توانید یک یا چند اینباند را انتخاب کنید تا موازنه موازنه شوند):</label>
+              {inbounds.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-slate-50 rounded-lg border max-h-48 overflow-y-auto">
+                  {inbounds.map((ib: any) => {
+                    const isChecked = (state.freeTestInboundIds || []).includes(ib.id) || (state.freeTestInboundId === ib.id);
+                    return (
+                      <label key={ib.id} className="flex items-center gap-2 text-sm text-slate-700 hover:text-indigo-600 cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          checked={isChecked}
+                          onChange={e => {
+                            let updatedIds = [...(state.freeTestInboundIds || [])];
+                            if (state.freeTestInboundId && !updatedIds.includes(state.freeTestInboundId)) {
+                              updatedIds.push(state.freeTestInboundId);
+                            }
+                            if (e.target.checked) {
+                              if (!updatedIds.includes(ib.id)) updatedIds.push(ib.id);
+                            } else {
+                              updatedIds = updatedIds.filter(id => id !== ib.id);
+                            }
+                            setState({
+                              ...state,
+                              freeTestInboundIds: updatedIds,
+                              freeTestInboundId: updatedIds[0] || undefined
+                            });
+                          }}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <span className="font-medium text-slate-800">{ib.remark}</span>
+                        <span className="text-xs text-slate-500 font-mono bg-slate-200 px-1.5 py-0.5 rounded">ID: {ib.id} ({ib.protocol})</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-700">
+                  ⚠️ ابتدا دکمه "دریافت لیست اینباندها" را در پایین کلیک کنید تا اتصال برقرار شده و اینباندها جهت انتخاب لود گردند. در صورت نبود اتصال، می‌توانید از همان آیدی پیشفرض استفاده کنید.
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">حجم تست رایگان (گیگابایت)</label>
@@ -590,7 +632,7 @@ function SettingsView() {
 function ProductsView() {
   const [products, setProducts] = useState<any[]>([]);
   const [inbounds, setInbounds] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '' });
+  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[] });
 
   useEffect(() => {
     fetch('/api/state')
@@ -611,7 +653,8 @@ function ProductsView() {
   const addProduct = async () => {
     const payload = {
       ...form,
-      inboundId: form.inboundId ? parseInt(form.inboundId) : undefined
+      inboundId: form.inboundId ? parseInt(form.inboundId) : undefined,
+      inboundIds: form.inboundIds
     };
     const res = await fetch('/api/products', {
       method: 'POST',
@@ -622,7 +665,7 @@ function ProductsView() {
     if (data.success) {
       setProducts(data.products);
       // Reset form
-      setForm({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '' });
+      setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] });
     }
   };
 
@@ -635,51 +678,91 @@ function ProductsView() {
   return (
     <div className="max-w-4xl mx-auto" dir="rtl">
        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
-         <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> تعریف پکیج و محصول جدید با اینباند اختصاصی</h2>
-         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">نام محصول (پکیج)</label>
-              <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md" placeholder="مثال: ۱ ماهه ۵۰ گیگابایت"/>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">قیمت (تومان)</label>
-              <input type="number" value={form.price} onChange={e=>setForm({...form, price: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">حجم پکیج (گیگابایت)</label>
-              <input type="number" value={form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">مدت زمان اعتبار (روز)</label>
-              <input type="number" value={form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">اینباند اختصاصی (Inbound)</label>
-              {inbounds.length > 0 ? (
-                <select 
-                  value={form.inboundId} 
-                  onChange={e => setForm({...form, inboundId: e.target.value})} 
-                  className="w-full px-3 py-2 border rounded-md"
-                >
-                  <option value="">-- پیشفرض عمومی --</option>
-                  {inbounds.map((ib: any) => (
-                    <option key={ib.id} value={ib.id}>{`${ib.remark} (پورت ${ib.port} - ${ib.protocol})`}</option>
-                  ))}
-                </select>
-              ) : (
-                <input 
-                  type="text" 
-                  value={form.inboundId} 
-                  onChange={e=>setForm({...form, inboundId: e.target.value})} 
-                  className="w-full px-3 py-2 border rounded-md" 
-                  placeholder="آیدی عددی (مثلاً 2)"
-                />
-              )}
-            </div>
+         <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> تعریف پکیج و محصول جدید با اینباندهای انتخابی</h2>
+         
+         <div className="space-y-4">
+           {/* Row 1 fields */}
+           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+             <div>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">نام محصول (پکیج)</label>
+               <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="مثال: ۱ ماهه ۵۰ گیگابایت"/>
+             </div>
+             <div>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">قیمت (تومان)</label>
+               <input type="number" value={form.price} onChange={e=>setForm({...form, price: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
+             </div>
+             <div>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">حجم پکیج (گیگابایت)</label>
+               <input type="number" value={form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
+             </div>
+             <div>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">مدت زمان اعتبار (روز)</label>
+               <input type="number" value={form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
+             </div>
+           </div>
+
+           {/* Row 2: Multiple Inbound Checkboxes */}
+           <div>
+             <label className="block text-xs font-semibold text-slate-700 mb-1.5">اینباندهای منتخب این پکیج (مشتریان جدید به طور خودکار به صورت تقسیم لود بین اینباندهای علامت‌خورده ساخته خواهند شد):</label>
+             {inbounds.length > 0 ? (
+               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 p-3 bg-slate-50 rounded-lg border max-h-40 overflow-y-auto">
+                 {inbounds.map((ib: any) => {
+                   const isChecked = form.inboundIds.includes(ib.id) || form.inboundId === String(ib.id);
+                   return (
+                     <label key={ib.id} className="flex items-center gap-2 text-xs text-slate-700 hover:text-indigo-600 cursor-pointer select-none">
+                       <input 
+                         type="checkbox" 
+                         checked={isChecked}
+                         onChange={e => {
+                           let updatedIds = [...form.inboundIds];
+                           if (form.inboundId && !updatedIds.includes(Number(form.inboundId))) {
+                             updatedIds.push(Number(form.inboundId));
+                           }
+                           if (e.target.checked) {
+                             if (!updatedIds.includes(ib.id)) updatedIds.push(ib.id);
+                           } else {
+                             updatedIds = updatedIds.filter(id => id !== ib.id);
+                           }
+                           setForm({
+                             ...form,
+                             inboundIds: updatedIds,
+                             inboundId: updatedIds[0] ? String(updatedIds[0]) : ''
+                           });
+                         }}
+                         className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                       />
+                       <span className="font-medium text-slate-800">{ib.remark}</span>
+                       <span className="text-[10px] text-slate-500 font-mono bg-slate-200 px-1 py-0.5 rounded">ID: {ib.id} ({ib.protocol})</span>
+                     </label>
+                   );
+                 })}
+               </div>
+             ) : (
+               <div className="flex gap-2">
+                 <input 
+                   type="text" 
+                   value={form.inboundId} 
+                   onChange={e=> {
+                     const val = e.target.value;
+                     const numeric = parseInt(val);
+                     setForm({
+                       ...form, 
+                       inboundId: val, 
+                       inboundIds: isNaN(numeric) ? [] : [numeric]
+                     });
+                   }} 
+                   className="w-full px-3 py-2 border rounded-md text-xs font-mono" 
+                   placeholder="آیدی عددی اینباند (مثلاً 2)"
+                 />
+                 <span className="text-[10px] text-amber-600 self-center">ابتدا مشخصات اتصال پنل سنایی را لود کنید تا لیست به صورت خودکار لود شود.</span>
+               </div>
+             )}
+           </div>
          </div>
-         <p className="text-xs text-slate-400 mt-2">💡 اگر شناسه اینباند اختصاصی را خالی بگذارید، کلاینت‌های این محصول بر روی همان "اینباند عمومی" تعریف شده در بخش ربات لود و رجیستر خواهند شد.</p>
+
+         <p className="text-xs text-slate-400 mt-3.5">💡 سیستم هوشمند موازنه بار: با انتخاب چند اینباند، ربات به طور خودکار به صورت چرخشی (Round-Robin رندم) کلاینت‌های جدید با پروتکل متناظر را روی این اینباندها تقسیم می‌کند تا لود روی سرورها یکنواخت گردد.</p>
          <div className="mt-4 text-left">
-            <button onClick={addProduct} className="bg-indigo-600 text-white px-5 py-2 rounded-md hover:bg-indigo-700 font-medium text-sm transition">ثبت و افزودن محصول</button>
+            <button onClick={addProduct} className="bg-indigo-600 text-white px-5 py-2 rounded-md hover:bg-indigo-700 font-semibold text-sm transition">ثبت و افزودن محصول</button>
          </div>
        </div>
 
@@ -691,7 +774,14 @@ function ProductsView() {
                <div className="space-y-2 mb-6 flex-1 text-sm">
                  <div className="flex justify-between border-b pb-1 text-slate-600"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
                  <div className="flex justify-between border-b pb-1 text-slate-600"><span>مدت زمان:</span><span className="font-bold text-slate-800">{p.durationDays === 0 ? 'نامحدود' : `${p.durationDays} روز`}</span></div>
-                 <div className="flex justify-between pb-1 text-slate-600"><span>موقعیت اینباند:</span><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-xs">{p.inboundId ? `اینباند ${p.inboundId}` : 'پیشفرض عمومی'}</span></div>
+                 <div className="flex justify-between pb-1 text-slate-600">
+                   <span>اینباندهای پکیج:</span>
+                   <span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
+                     {p.inboundIds && p.inboundIds.length > 0 
+                       ? p.inboundIds.map((id: number) => `ID ${id}`).join(', ') 
+                       : (p.inboundId ? `اینباند ${p.inboundId}` : 'پیشفرض عمومی')}
+                   </span>
+                 </div>
                </div>
                <button onClick={() => deleteProduct(p.id)} className="w-full py-2 flex items-center justify-center gap-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition font-medium text-sm">
                  <Trash2 className="w-4 h-4" /> <span>حذف محصول</span>
@@ -699,7 +789,7 @@ function ProductsView() {
             </div>
           ))}
           {products.length === 0 && (
-            <div className="col-span-full bg-slate-100/50 text-slate-500 text-center p-12 rounded-xl border border-dashed">هنوز هیچ پکیجی ثبت نکرده‌اید. از بخش بالا پکیج جدید تعریف کنید.</div>
+            <div className="col-span-full bg-slate-100/50 text-slate-500 text-center p-12 rounded-xl border border-dashed">هنوز هیچ پکیجی ثبت nکرده‌اید. از بخش بالا پکیج جدید تعریف کنید.</div>
           )}
        </div>
     </div>

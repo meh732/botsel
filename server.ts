@@ -42,6 +42,7 @@ async function startServer() {
       freeTestDurationDays, 
       freeTestEnabled, 
       freeTestInboundId, 
+      freeTestInboundIds,
       referralRewardToman, 
       adminIds, 
       cardNumber, 
@@ -64,6 +65,11 @@ async function startServer() {
     if (coupons !== undefined) updates.coupons = coupons;
     if (freeTestInboundId !== undefined) {
       updates.freeTestInboundId = freeTestInboundId ? parseInt(freeTestInboundId) : undefined;
+    }
+    if (freeTestInboundIds !== undefined) {
+      updates.freeTestInboundIds = Array.isArray(freeTestInboundIds)
+        ? freeTestInboundIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
+        : [];
     }
 
     if (adminIds !== undefined) {
@@ -173,6 +179,17 @@ async function startServer() {
     if (!product.id) {
       product.id = uuidv4();
     }
+
+    if (product.inboundId !== undefined) {
+      product.inboundId = product.inboundId ? parseInt(product.inboundId) : undefined;
+    }
+
+    if (product.inboundIds !== undefined) {
+      product.inboundIds = Array.isArray(product.inboundIds)
+        ? product.inboundIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
+        : [];
+    }
+
     const state = db.getState();
     const existingIndex = state.products.findIndex(p => p.id === product.id);
     const newProducts = [...state.products];
