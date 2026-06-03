@@ -14,6 +14,7 @@ export interface Product {
   price: number; // in Toman
   volumeGb: number; // Gigabytes
   durationDays: number;
+  inboundId?: number;
 }
 
 export interface User {

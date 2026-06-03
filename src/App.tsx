@@ -72,15 +72,31 @@ function SettingsView() {
   const [state, setState] = useState<any>(null);
   const [saving, setSaving] = useState(false);
   const [inbounds, setInbounds] = useState<any[]>([]);
+  const [adminIdsStr, setAdminIdsStr] = useState('');
 
   useEffect(() => {
-    fetch('/api/state').then(r => r.json()).then(setState);
+    fetch('/api/state')
+      .then(r => r.json())
+      .then(data => {
+        setState(data);
+        if (data.adminIds) {
+          setAdminIdsStr(data.adminIds.join(', '));
+        }
+      });
   }, []);
 
   if (!state) return <div className="text-center p-8">Loading...</div>;
 
   const saveGeneral = async () => {
     setSaving(true);
+    // Parse comma-separated IDs to array of numbers
+    const parsedAdminIds = adminIdsStr
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s !== '')
+      .map(s => parseInt(s))
+      .filter(id => !isNaN(id));
+
     await fetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -89,10 +105,11 @@ function SettingsView() {
         freeTestVolumeGb: Number(state.freeTestVolumeGb),
         freeTestDurationDays: Number(state.freeTestDurationDays),
         referralRewardToman: Number(state.referralRewardToman) || 0,
+        adminIds: parsedAdminIds
       })
     });
     setSaving(false);
-    alert('General settings saved. Bot restarted if token changed.');
+    alert('تنظیمات عمومی با موفقیت ذخیره شد. اگر توکن ربات تغییر کرده، ربات مجدداً راه‌اندازی شد.');
   };
 
   const savePanel = async () => {
@@ -103,7 +120,7 @@ function SettingsView() {
       body: JSON.stringify(state.panel)
     });
     setSaving(false);
-    alert('Panel settings saved.');
+    alert('اطلاعات پنل سنایی ذخیره شد.');
   };
 
   const loadInbounds = async () => {
@@ -113,154 +130,236 @@ function SettingsView() {
       if (data.success) {
         setInbounds(data.inbounds);
       } else {
-        alert('Failed: ' + data.message);
+        alert('خطا در دریافت لیست اینباندها: ' + data.message);
       }
     } catch(e: any) {
-      alert('Error connecting to panel. Check credentials.');
+      alert('خطا در ارتباط با پنل. مشخصات، آدرس و یا پورت و فایروال را بررسی کنید.');
     }
   };
 
   return (
-    <div className="space-y-8 max-w-2xl mx-auto">
+    <div className="space-y-8 max-w-2xl mx-auto" dir="rtl">
+      {/* Configuration Help Card */}
+      <div className="bg-gradient-to-tr from-slate-900 to-indigo-900 text-white p-6 rounded-xl shadow-md border border-slate-750">
+        <h3 className="text-lg font-bold mb-2 flex items-center">💡 راهنمای کانفیگ و اتصال ربات به X-UI :</h3>
+        <ul className="text-sm space-y-2 text-slate-200 leading-relaxed pr-4 list-disc">
+          <li><strong>آیدی ادمین اصلی (Admin Chat IDs):</strong> هر کاربر تلگرام یک شناسه عددی دارد (مثلاً <code>51239241</code>) که می‌توانید آن را از ربات‌هایی مثل <code className="bg-slate-850 px-1 py-0.5 rounded text-indigo-300">@userinfobot</code> دریافت نموده و در بخش زیر ذخیره کنید. فقط این آیدی‌ها به بخش <code>/admin</code> در ربات دسترسی خواهند داشت.</li>
+          <li><strong>اتصال سنایی (X-UI Connection):</strong> آدرس IP و پورت پنل خود را دقیقاً با پورت تعریف شده (مثلاً <code>http://1.2.3.4:2053</code>) وارد کنید. اگر پنل شما دارای پسوند مسیر (basePath) است حتماً آن را نیز بنویسید (مثل <code>http://1.2.3.4:2053/myprefix</code>).</li>
+          <li><strong>شناسه اینباند (Inbound ID):</strong> تمام اکانت‌های تستی و فروخته شده به عنوان کلاینت (User) داخل یک <strong>Inbound</strong> در پنل سنایی اضافه می‌شوند. پس از ذخیره آدرس و پسورد پنل، روی دکمه <strong>"دریافت لیست اینباندها"</strong> کلیک کنید تا لیست اینباندهای شما لود شود و سپس شناسه (مثلاً <code>1</code> یا <code>2</code>) را کلیک یا تایپ کنید.</li>
+        </ul>
+      </div>
+
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold mb-4 flex items-center"><Send className="w-5 h-5 mr-2 text-indigo-600"/> General & Telegram Bot</h2>
+        <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Send className="w-5 h-5 text-indigo-600"/> تنظیمات عمومی و توکن ربات تلگرام</h2>
         
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Telegram Bot Token (From @BotFather)</label>
-            <input type="password" value={state.botToken} onChange={e => setState({...state, botToken: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-sm" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+            <label className="block text-sm font-medium text-slate-700 mb-1">توکن ربات تلگرام (Telegram Bot Token)</label>
+            <input type="password" value={state.botToken} onChange={e => setState({...state, botToken: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-sm text-left" dir="ltr" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">شناسه عددی ادمین‌های اصلی (با ویرگول انگلیسی , جدا کنید)</label>
+            <input type="text" value={adminIdsStr} onChange={e => setAdminIdsStr(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-sm text-left" dir="ltr" placeholder="e.g. 51239241, 14023924" />
+            <p className="text-xs text-slate-400 mt-1" dir="rtl">برای وارد کردن ادمین‌های ربات، شناسه‌های عددی آنها را با کاما جدا کنید.</p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Free Test Volume (GB)</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">حجم تست رایگان (گیگابایت)</label>
               <input type="number" value={state.freeTestVolumeGb} onChange={e => setState({...state, freeTestVolumeGb: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Free Test Duration (Days)</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">مدت زمان تست رایگان (روز)</label>
               <input type="number" value={state.freeTestDurationDays} onChange={e => setState({...state, freeTestDurationDays: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Referral Reward (Toman)</label>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-slate-700 mb-1">پاداش معرفی زیرمجموعه (تومان)</label>
               <input type="number" value={state.referralRewardToman || 0} onChange={e => setState({...state, referralRewardToman: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
 
-          <button onClick={saveGeneral} disabled={saving} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center ml-auto">
-            <Save className="w-4 h-4 mr-2" /> Save & Restart Bot
+          <button onClick={saveGeneral} disabled={saving} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center mr-auto">
+            <Save className="w-4 h-4 ml-2" /> ذخیره تنظیمات عمومی ربات
           </button>
         </div>
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold mb-4 flex items-center"><RefreshCw className="w-5 h-5 mr-2 text-emerald-600"/> Sanaei X-UI Panel</h2>
+        <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><RefreshCw className="w-5 h-5 text-emerald-600"/> مشخصات و اتصال پنل سنایی X-UI</h2>
         
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Panel URL</label>
-            <input type="text" value={state.panel.url || ''} onChange={e => setState({...state, panel: {...state.panel, url: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" placeholder="http://1.2.3.4:2053" />
+            <label className="block text-sm font-medium text-slate-700 mb-1">آدرس کامل اتصال به پنل سنایی (X-UI URL)</label>
+            <input type="text" value={state.panel.url || ''} onChange={e => setState({...state, panel: {...state.panel, url: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 text-left font-mono" dir="ltr" placeholder="http://1.2.3.4:2053" />
           </div>
           <div className="grid grid-cols-2 gap-4">
              <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">نام کاربری ورود به پنل</label>
               <input type="text" value={state.panel.username || ''} onChange={e => setState({...state, panel: {...state.panel, username: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">رمز عبور ورود به پنل</label>
               <input type="password" value={state.panel.password || ''} onChange={e => setState({...state, panel: {...state.panel, password: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
 
-          <div className="flex items-end space-x-4">
+          <div className="flex items-end gap-4">
             <div className="flex-1">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Target Inbound ID (For adding clients)</label>
-              <input type="number" value={state.panel.inboundId || ''} onChange={e => setState({...state, panel: {...state.panel, inboundId: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" placeholder="e.g. 1" />
+              <label className="block text-sm font-medium text-slate-700 mb-1">شناسه عددی Inbound مدنظر</label>
+              <input type="number" value={state.panel.inboundId || ''} onChange={e => setState({...state, panel: {...state.panel, inboundId: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono" placeholder="مثلاً 1" />
             </div>
-            <button onClick={loadInbounds} className="bg-slate-200 text-slate-800 px-4 py-2 rounded-md hover:bg-slate-300 transition">Fetch Inbounds</button>
+            <button onClick={loadInbounds} className="bg-slate-100 text-slate-800 px-4 py-2 rounded-md hover:bg-slate-200 transition font-medium text-sm border">دریافت لیست اینباندها</button>
           </div>
 
           {inbounds.length > 0 && (
             <div className="mt-4 border rounded-md overflow-hidden bg-slate-50">
-               <table className="w-full text-sm text-left">
+               <table className="w-full text-sm text-right">
                   <thead className="bg-slate-100 text-slate-600 border-b">
-                    <tr><th className="px-4 py-2 font-medium">ID</th><th className="px-4 py-2 font-medium">Remark</th><th className="px-4 py-2 font-medium">Port</th><th className="px-4 py-2 font-medium">Protocol</th></tr>
+                    <tr>
+                      <th className="px-4 py-2 font-medium">شناسه ID</th>
+                      <th className="px-4 py-2 font-medium">عنوان (Remark)</th>
+                      <th className="px-4 py-2 font-medium">پورت</th>
+                      <th className="px-4 py-2 font-medium">پروتکل</th>
+                    </tr>
                   </thead>
                   <tbody>
                     {inbounds.map((ib: any) => (
-                      <tr key={ib.id} className="border-b last:border-0 hover:bg-white cursor-pointer" onClick={() => setState({...state, panel: {...state.panel, inboundId: ib.id}})}>
+                      <tr key={ib.id} className="border-b last:border-0 hover:bg-white cursor-pointer" onClick={() => setState({...state, panel: { ...state.panel, inboundId: ib.id }})}>
                         <td className="px-4 py-2 font-mono">{ib.id}</td>
-                        <td className="px-4 py-2">{ib.remark}</td>
-                        <td className="px-4 py-2">{ib.port}</td>
-                        <td className="px-4 py-2">{ib.protocol}</td>
+                        <td className="px-4 py-2 font-bold text-slate-800">{ib.remark}</td>
+                        <td className="px-4 py-2 font-mono">{ib.port}</td>
+                        <td className="px-4 py-2 text-indigo-600 font-bold">{ib.protocol}</td>
                       </tr>
                     ))}
                   </tbody>
                </table>
+               <p className="text-xs text-emerald-600 p-2 text-center font-medium">💡 با کلیک روی هر ردیف بالا، شناسه آن به صورت اتوماتیک انتخاب می‌شود.</p>
             </div>
           )}
 
-          <button onClick={savePanel} disabled={saving} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center ml-auto">
-            <Save className="w-4 h-4 mr-2" /> Save Panel Details
+          <button onClick={savePanel} disabled={saving} className="bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition flex items-center mr-auto">
+            <Save className="w-4 h-4 ml-2" /> ذخیره اطلاعات اتصال پنل
           </button>
         </div>
       </div>
     </div>
   );
 }
-
 function ProductsView() {
   const [products, setProducts] = useState<any[]>([]);
-  
-  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30 });
+  const [inbounds, setInbounds] = useState<any[]>([]);
+  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '' });
 
   useEffect(() => {
-    fetch('/api/state').then(r => r.json()).then(s => setProducts(s.products));
+    fetch('/api/state')
+      .then(r => r.json())
+      .then(s => setProducts(s.products || []));
+    
+    // Fetch inbounds on load if available
+    fetch('/api/xui-inbounds')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          setInbounds(data.inbounds || []);
+        }
+      })
+      .catch(e => console.log('Could not prefetch inbounds for products dropdown:', e));
   }, []);
 
   const addProduct = async () => {
+    const payload = {
+      ...form,
+      inboundId: form.inboundId ? parseInt(form.inboundId) : undefined
+    };
     const res = await fetch('/api/products', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(form)
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if(data.success) setProducts(data.products);
+    if (data.success) {
+      setProducts(data.products);
+      // Reset form
+      setForm({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '' });
+    }
   };
 
   const deleteProduct = async (id: string) => {
+    if(!confirm('آیا از حذف این محصول مطمئن هستید؟')) return;
     await fetch(`/api/products/${id}`, { method: 'DELETE' });
     setProducts(products.filter(p => p.id !== id));
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto" dir="rtl">
        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
-         <h2 className="text-lg font-bold mb-4 flex items-center"><Plus className="w-5 h-5 mr-2 text-indigo-600"/> Add New Product</h2>
-         <div className="grid grid-cols-4 gap-4 items-end">
-            <div><label className="block text-xs font-medium text-slate-500 mb-1">Name</label><input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md" placeholder="e.g. 1 Month 50GB"/></div>
-            <div><label className="block text-xs font-medium text-slate-500 mb-1">Price (Toman)</label><input type="number" value={form.price} onChange={e=>setForm({...form, price: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/></div>
-            <div><label className="block text-xs font-medium text-slate-500 mb-1">Volume (GB)</label><input type="number" value={form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/></div>
-            <div><label className="block text-xs font-medium text-slate-500 mb-1">Duration (Days)</label><input type="number" value={form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/></div>
+         <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> تعریف پکیج و محصول جدید با اینباند اختصاصی</h2>
+         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">نام محصول (پکیج)</label>
+              <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md" placeholder="مثال: ۱ ماهه ۵۰ گیگابایت"/>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">قیمت (تومان)</label>
+              <input type="number" value={form.price} onChange={e=>setForm({...form, price: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">حجم پکیج (گیگابایت)</label>
+              <input type="number" value={form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">مدت زمان اعتبار (روز)</label>
+              <input type="number" value={form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md"/>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">اینباند اختصاصی (Inbound)</label>
+              {inbounds.length > 0 ? (
+                <select 
+                  value={form.inboundId} 
+                  onChange={e => setForm({...form, inboundId: e.target.value})} 
+                  className="w-full px-3 py-2 border rounded-md"
+                >
+                  <option value="">-- پیشفرض عمومی --</option>
+                  {inbounds.map((ib: any) => (
+                    <option key={ib.id} value={ib.id}>{`${ib.remark} (پورت ${ib.port} - ${ib.protocol})`}</option>
+                  ))}
+                </select>
+              ) : (
+                <input 
+                  type="text" 
+                  value={form.inboundId} 
+                  onChange={e=>setForm({...form, inboundId: e.target.value})} 
+                  className="w-full px-3 py-2 border rounded-md" 
+                  placeholder="آیدی عددی (مثلاً 2)"
+                />
+              )}
+            </div>
          </div>
-         <div className="mt-4 text-right">
-            <button onClick={addProduct} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">Add Product</button>
+         <p className="text-xs text-slate-400 mt-2">💡 اگر شناسه اینباند اختصاصی را خالی بگذارید، کلاینت‌های این محصول بر روی همان "اینباند عمومی" تعریف شده در بخش ربات لود و رجیستر خواهند شد.</p>
+         <div className="mt-4 text-left">
+            <button onClick={addProduct} className="bg-indigo-600 text-white px-5 py-2 rounded-md hover:bg-indigo-700 font-medium text-sm transition">ثبت و افزودن محصول</button>
          </div>
        </div>
 
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {products.map(p => (
-            <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col">
+            <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col hover:shadow-md transition">
                <h3 className="text-lg font-bold text-slate-900 mb-2">{p.name}</h3>
-               <div className="text-3xl font-black text-indigo-600 mb-4">{p.price.toLocaleString()} <span className="text-base font-normal text-slate-500">Toman</span></div>
-               <div className="space-y-2 mb-6 flex-1">
-                 <div className="flex justify-between text-sm"><span className="text-slate-500">Volume</span><span className="font-semibold text-slate-800">{p.volumeGb === 0 ? 'Unlimited' : `${p.volumeGb} GB`}</span></div>
-                 <div className="flex justify-between text-sm"><span className="text-slate-500">Duration</span><span className="font-semibold text-slate-800">{p.durationDays === 0 ? 'Unlimited' : `${p.durationDays} Days`}</span></div>
+               <div className="text-2xl font-black text-indigo-600 mb-4">{p.price.toLocaleString()} <span className="text-sm font-normal text-slate-500">تومان</span></div>
+               <div className="space-y-2 mb-6 flex-1 text-sm">
+                 <div className="flex justify-between border-b pb-1 text-slate-600"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
+                 <div className="flex justify-between border-b pb-1 text-slate-600"><span>مدت زمان:</span><span className="font-bold text-slate-800">{p.durationDays === 0 ? 'نامحدود' : `${p.durationDays} روز`}</span></div>
+                 <div className="flex justify-between pb-1 text-slate-600"><span>موقعیت اینباند:</span><span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-xs">{p.inboundId ? `اینباند ${p.inboundId}` : 'پیشفرض عمومی'}</span></div>
                </div>
-               <button onClick={() => deleteProduct(p.id)} className="w-full py-2 flex items-center justify-center space-x-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition font-medium">
-                 <Trash2 className="w-4 h-4" /> <span>Delete</span>
+               <button onClick={() => deleteProduct(p.id)} className="w-full py-2 flex items-center justify-center gap-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition font-medium text-sm">
+                 <Trash2 className="w-4 h-4" /> <span>حذف محصول</span>
                </button>
             </div>
           ))}
+          {products.length === 0 && (
+            <div className="col-span-full bg-slate-100/50 text-slate-500 text-center p-12 rounded-xl border border-dashed">هنوز هیچ پکیجی ثبت نکرده‌اید. از بخش بالا پکیج جدید تعریف کنید.</div>
+          )}
        </div>
     </div>
   );

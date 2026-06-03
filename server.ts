@@ -34,11 +34,27 @@ async function startServer() {
   });
 
   api.post("/update-settings", (req, res) => {
-    const { botToken, freeTestVolumeGb, freeTestDurationDays, referralRewardToman } = req.body;
-    db.updateState({ botToken, freeTestVolumeGb, freeTestDurationDays, referralRewardToman });
+    const { botToken, freeTestVolumeGb, freeTestDurationDays, referralRewardToman, adminIds } = req.body;
     
-    // Restart bot if token changed
-    if (botToken && botToken !== db.getState().botToken) {
+    const updates: any = { 
+      botToken, 
+      freeTestVolumeGb, 
+      freeTestDurationDays, 
+      referralRewardToman 
+    };
+
+    if (adminIds !== undefined) {
+      updates.adminIds = Array.isArray(adminIds)
+        ? adminIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
+        : [];
+    }
+
+    const oldToken = db.getState().botToken;
+    db.updateState(updates);
+    
+    // Start or restart bot if token is present
+    if (botToken) {
+      console.log('[Bot] Triggering initBot from settings update endpoint.');
       initBot();
     }
     res.json({ success: true });

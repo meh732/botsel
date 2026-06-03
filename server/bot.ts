@@ -12,21 +12,45 @@ const adminSession = new Map<number, string>();
 export function initBot() {
   const state = db.getState();
   if (!state.botToken) {
-    console.log('No Bot Token configured. Bot not started.');
+    console.log('[Bot] No Bot Token configured. Bot not started.');
     return;
   }
 
   if (bot && isPolling) {
-    bot.stopPolling();
+    try {
+      console.log('[Bot] Stopping existing bot polling...');
+      bot.stopPolling();
+      isPolling = false;
+    } catch (e: any) {
+      console.error('[Bot] Error stopping old bot polling:', e.message);
+    }
   }
 
-  bot = new TelegramBot(state.botToken, { polling: true });
-  isPolling = true;
+  try {
+    console.log(`[Bot] Initializing Telegram Bot with token ending in ...${state.botToken.substring(state.botToken.length - 8 || 0)}`);
+    bot = new TelegramBot(state.botToken, { polling: true });
+    isPolling = true;
 
-  bot.setMyCommands([
-    { command: '/start', description: 'منوی اصلی' },
-    { command: '/admin', description: 'مدیریت پنل' }
-  ]).catch(err => console.error("Failed to set Bot commands (menu)", err));
+    // Attach crucial error listeners to avoid crashing or unhandled rejections
+    bot.on('polling_error', (error: any) => {
+      console.error('[Bot Error] Polling error:', error.message || error);
+    });
+
+    bot.on('error', (error: any) => {
+      console.error('[Bot Error] General error:', error.message || error);
+    });
+
+    bot.setMyCommands([
+      { command: '/start', description: 'منوی اصلی' },
+      { command: '/admin', description: 'مدیریت پنل' }
+    ]).then(() => {
+      console.log('[Bot] Commands menu registered successfully on Telegram.');
+    }).catch(err => {
+      console.error("[Bot Error] Failed to set Bot commands menu (Check token):", err.message || err);
+    });
+  } catch (err: any) {
+    console.error('[Bot Error] Exception thrown during Bot creation:', err.message || err);
+  }
 
   const sendAdminMainMenu = (chatId: number) => {
     bot!.sendMessage(chatId, '🔧 پنل مدیریت کامل ربات سنایی (X-UI):\nیکی از گزینه‌های مدیریتی زیر را انتخاب کنید:', {
@@ -91,7 +115,8 @@ export function initBot() {
       msg += '❌ هیچ محصولی تعریف نشده است.';
     } else {
       state.products.forEach((p, idx) => {
-        msg += `${idx + 1}- *${p.name}*\n💰 قیمت: ${p.price.toLocaleString()} تومان\n📦 حجم: ${p.volumeGb} GB\n⏳ زمان: ${p.durationDays} روز\n🗑 آیدی محصول: \`${p.id}\`\n----------------\n`;
+        const inboundText = p.inboundId ? `🆔 اینباند اختصاصی: ${p.inboundId}` : '🆔 اینباند: عمومی (تعریف شده در تنظیمات)';
+        msg += `${idx + 1}- *${p.name}*\n💰 قیمت: ${p.price.toLocaleString()} تومان\n📦 حجم: ${p.volumeGb} GB\n⏳ زمان: ${p.durationDays} روز\n${inboundText}\n🗑 آیدی محصول: \`${p.id}\`\n----------------\n`;
       });
     }
 
@@ -293,6 +318,7 @@ export function initBot() {
         const price = parseInt(parts[1].trim());
         const volumeGb = parseFloat(parts[2].trim());
         const durationDays = parseInt(parts[3].trim());
+        const inboundId = parts.length >= 5 ? (parseInt(parts[4].trim()) || undefined) : undefined;
 
         if (isNaN(price) || isNaN(volumeGb) || isNaN(durationDays)) {
           bot!.sendMessage(chatId, '❌ مقادیر عددی پکیج نامعتبر است.');
@@ -301,7 +327,7 @@ export function initBot() {
         }
 
         const newId = `p_${Date.now()}`;
-        state.products.push({ id: newId, name, price, volumeGb, durationDays });
+        state.products.push({ id: newId, name, price, volumeGb, durationDays, inboundId });
         db.updateState({ products: state.products });
         
         bot!.sendMessage(chatId, `✅ محصول جدید *${name}* با موفقیت تعریف شد.`, { parse_mode: 'Markdown' });
@@ -603,7 +629,7 @@ export function initBot() {
         if (data === 'set_t_volume') promptText = '📦 حجم مورد نظر برای اکانت تست رایگان کاربر جدید را وارد کنید (به گیگابایت):';
         if (data === 'set_t_days') promptText = '⏰ مدت زمان اعتبار اکانت تست رایگان را وارد کنید (به روز):';
         if (data === 'set_reward_toman') promptText = '💰 هدیه دریافت پاداش برای زیرمجموعه‌گیری به تومان را بفرستید:';
-        if (data === 'add_prod') promptText = '➕ لطفا فرمت پکیج محصول جدید را به صورت دقیق بنویسید و بفرستید:\n\n`نام محصول,قیمت(به تومان),حجم(به گیگ),زمان(به روز)`\n\nمثال:\n`طرح برنزی,50000,15,30`';
+        if (data === 'add_prod') promptText = '➕ لطفا فرمت پکیج محصول جدید را به صورت دقیق بنویسید و بفرستید:\n\n`نام محصول,قیمت(به تومان),حجم(به گیگ),زمان(به روز),آیدی اینباند(عددی اختیاری)`\n\nمثال بدون اینباند:\n`طرح برنزی,50000,15,30`\n\nمثال با اینباند اختصاصی شماره ۲:\n`طرح طلایی,120000,50,30,2`';
         if (data === 'charge_user_bot') promptText = '➕ لطفا شناسه کاربری (Chat ID) و میزان شارژ مطلوب به تومان را با یک فاصله بنویسید:\n\nمثال:\n`51239401 50000`';
         if (data === 'change_role_bot') promptText = '🔄 لطفا شناسه کاربری (Chat ID) مدنظر را جهت جابجایی بین همکار/عادی بنویسید تا اعمال شود:\nمثال:\n`14023924`';
         if (data === 'settle_user_bot') promptText = '💵 لطفا شناسه کاربری (Chat ID) همکار مدنظر را جهت تسویه کامل بدهی به مدیریت ارسال کنید:';
@@ -650,7 +676,7 @@ export function initBot() {
       bot!.sendMessage(chatId, `⏳ در حال خرید ${product.name} و ساخت کانفیگ...`);
       
       try {
-        const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays);
+        const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, product.inboundId);
         
         if (user.isSeller) {
           user.debt = (user.debt || 0) + product.price;
