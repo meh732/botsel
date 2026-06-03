@@ -21,12 +21,19 @@ class XuiClient {
       throw new Error('مشخصات پنل متصل نشده است. لطفا آدرس، نام کاربری و رمز ورود را در بخش تنظیمات وارد نمایید.');
     }
     
+    // Auto-prepend http:// if no protocol is defined
+    let formattedUrl = panel.url.trim();
+    if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
+      formattedUrl = 'http://' + formattedUrl;
+    }
+    
     // Create base URL without trailing slash
-    const baseURL = panel.url.endsWith('/') ? panel.url.slice(0, -1) : panel.url;
+    const baseURL = formattedUrl.endsWith('/') ? formattedUrl.slice(0, -1) : formattedUrl;
 
     if (!this.cookie) {
       console.log(`[X-UI] Connection attempt to: ${baseURL}/login using username: ${panel.username}`);
       
+      let lastErrorMsg = '';
       let res;
       try {
         // Try JSON login post first
@@ -37,14 +44,18 @@ class XuiClient {
           headers: { 'Content-Type': 'application/json' },
           validateStatus: () => true
         });
-        console.log(`[X-UI] JSON login response status: ${res.status}, success: ${res.data?.success}, body:`, JSON.stringify(res.data));
+        console.log(`[X-UI] JSON login response status: ${res.status}, success: ${res.data?.success}`, JSON.stringify(res.data));
+        if (!res.data?.success) {
+          lastErrorMsg = res.data?.msg || 'اطلاعات کاربری اشتباه است.';
+        }
       } catch (jsonErr: any) {
         console.error(`[X-UI] JSON login threw exception: ${jsonErr.message}`);
+        lastErrorMsg = `خطای اتصال شبکه: ${jsonErr.message}`;
       }
       
       // Fallback: Try URL-encoded post (required by some MHSanaei/franz versions)
       if (!res || !res.data?.success) {
-        console.log(`[X-UI] JSON login failed, trying Form URL-encoded fallback login...`);
+        console.log(`[X-UI] JSON login failed or unreachable, trying Form URL-encoded fallback login...`);
         try {
           const params = new URLSearchParams();
           params.append('username', panel.username);
@@ -54,27 +65,29 @@ class XuiClient {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             validateStatus: () => true
           });
-          console.log(`[X-UI] Form login response status: ${resForm.status}, success: ${resForm.data?.success}, body:`, JSON.stringify(resForm.data));
+          console.log(`[X-UI] Form login response status: ${resForm.status}, success: ${resForm.data?.success}`, JSON.stringify(resForm.data));
           if (resForm.data?.success) {
             res = resForm;
+            lastErrorMsg = ''; // Reset on success
+          } else {
+            lastErrorMsg = resForm.data?.msg || lastErrorMsg || 'نام کاربری یا رمز عبور اشتباه است.';
           }
         } catch (formErr: any) {
           console.error(`[X-UI] Form/fallback login threw exception: ${formErr.message}`);
+          lastErrorMsg = lastErrorMsg || `خطای اتصال شبکه (فرم): ${formErr.message}`;
         }
       }
       
       if (res && res.data?.success) {
         const cookies = res.headers['set-cookie'];
         if (cookies && cookies.length > 0) {
-          // Join all cookies (session, lang, etc.) instead of just the first one
           this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
           console.log('[X-UI] Logged in successfully. Saved Session Cookies:', this.cookie);
         } else {
           throw new Error('پنل جواب مثبت داد اما کوکی دریافت نشد. لطفا پسوند آدرس پنل (basePath) را چک کنید.');
         }
       } else {
-        const errorMsg = res?.data?.msg || 'نام کاربری یا رمز عبور پنل سنایی اشتباه است.';
-        throw new Error(errorMsg);
+        throw new Error(lastErrorMsg || 'خطا در ورود به پنل سنایی. لطفا آدرس، پورت و فایروال را بررسی کنید.');
       }
     }
     
@@ -108,6 +121,33 @@ class XuiClient {
     }
   }
 
+  public async delClient(inboundId: number, clientUuid: string) {
+    try {
+      const opts = await this.getAuthOptions();
+      console.log(`[X-UI] Deleting client ${clientUuid} from inbound ${inboundId}`);
+      
+      // Try MHSanaei/franz standard format: /panel/api/inbounds/delClient/{clientUuid}
+      let res = await this.client.post(`${opts.baseURL}/panel/api/inbounds/delClient/${clientUuid}`, {}, {
+        headers: opts.headers,
+        validateStatus: () => true
+      });
+      
+      // Fallback: Try /panel/api/inbounds/{inboundId}/delClient/{clientUuid}
+      if (!res.data || !res.data.success) {
+        res = await this.client.post(`${opts.baseURL}/panel/api/inbounds/delClient/${inboundId}/${clientUuid}`, {}, {
+          headers: opts.headers,
+          validateStatus: () => true
+        });
+      }
+      
+      console.log(`[X-UI] delClient response:`, JSON.stringify(res.data));
+      return res.data?.success || false;
+    } catch (e: any) {
+      console.error('[X-UI] Failed to delete client:', e.message);
+      return false;
+    }
+  }
+
   public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundId?: number) {
     const state = db.getState();
     const finalInboundId = targetInboundId || state.panel.inboundId;
@@ -118,6 +158,27 @@ class XuiClient {
     try {
       const opts = await this.getAuthOptions();
       
+      // Scan for any existing client with the same email across all inbounds, and delete to prevent duplicates
+      try {
+        const inboundsList = await this.getInbounds();
+        if (inboundsList && Array.isArray(inboundsList)) {
+          for (const inbound of inboundsList) {
+            if (inbound.settings) {
+              const parsedSettings = typeof inbound.settings === 'string' ? JSON.parse(inbound.settings) : inbound.settings;
+              if (parsedSettings && parsedSettings.clients) {
+                const found = parsedSettings.clients.find((c: any) => c.email === email);
+                if (found) {
+                  console.log(`[X-UI] Found existing client with email "${email}" (Id: ${found.id}) in inbound ${inbound.id}. Deleting to allow update/reinstall...`);
+                  await this.delClient(inbound.id, found.id);
+                }
+              }
+            }
+          }
+        }
+      } catch (scanErr: any) {
+        console.error('[X-UI Error] Error scanning/deleting duplicate clients, proceeding anyway:', scanErr.message);
+      }
+
       // Calculate expiry time (epoch ms)
       const expiryTime = durationDays > 0 ? Date.now() + durationDays * 24 * 60 * 60 * 1000 : 0;
       // Calculate volume in bytes

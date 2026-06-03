@@ -1,11 +1,13 @@
 import express from "express";
 import path from "path";
 import cors from "cors";
+import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { createServer as createViteServer } from "vite";
 import { db } from "./server/db.js";
 import { initBot } from "./server/bot.js";
 import { xui } from "./server/xui.js";
+import { encryptData, decryptData } from "./server/crypto.js";
 
 async function startServer() {
   const app = express();
@@ -80,6 +82,55 @@ async function startServer() {
       res.json({ success: true, inbounds });
     } catch (e: any) {
       res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  api.post("/backup", (req, res) => {
+    try {
+      const { password } = req.body;
+      if (!password) {
+        return res.status(400).json({ success: false, message: 'رمز عبور برای رمزگذاری فایل بکاپ الزامی است.' });
+      }
+      
+      const dbPath = path.join(process.cwd(), 'db.json');
+      if (!fs.existsSync(dbPath)) {
+        return res.status(404).json({ success: false, message: 'فایل دیتابیس یافت نشد.' });
+      }
+      
+      const rawData = fs.readFileSync(dbPath, 'utf8');
+      const encryptedPayload = encryptData(rawData, password);
+      
+      res.json({ success: true, payload: encryptedPayload });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در ایجاد بکاپ.' });
+    }
+  });
+
+  api.post("/restore", (req, res) => {
+    try {
+      const { payload, password } = req.body;
+      if (!payload || !password) {
+        return res.status(400).json({ success: false, message: 'مقادیر بکاپ و رمز عبور الزامی می‌باشند.' });
+      }
+      
+      const decryptedData = decryptData(payload, password);
+      const parsed = JSON.parse(decryptedData);
+      
+      if (!parsed.users || !parsed.panel) {
+        return res.status(400).json({ success: false, message: 'فایل پشتیبان معتبر نیست. بخش‌های حیاتی خالی هستند.' });
+      }
+      
+      // Write to db.json and update memory state
+      const dbPath = path.join(process.cwd(), 'db.json');
+      fs.writeFileSync(dbPath, JSON.stringify(parsed, null, 2), 'utf8');
+      db.updateState(parsed);
+      
+      // Re-initialize the Telegram bot
+      initBot();
+      
+      res.json({ success: true, message: 'موفقیت‌آمیز: کل دیتابیس و تنظیمات با موفقیت بازیابی شد.' });
+    } catch (e: any) {
+      res.status(400).json({ success: false, message: e.message || 'خطا در رمزگشایی یا بازیابی دیتابیس.' });
     }
   });
 

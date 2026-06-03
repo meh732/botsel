@@ -1,6 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { db } from './db.js';
 import { xui } from './xui.js';
+import { encryptData, decryptData } from './crypto.js';
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
@@ -9,22 +10,30 @@ let bot: TelegramBot | null = null;
 let isPolling = false;
 const adminSession = new Map<number, string>();
 
-export function initBot() {
+export async function initBot() {
   const state = db.getState();
   if (!state.botToken) {
     console.log('[Bot] No Bot Token configured. Bot not started.');
     return;
   }
 
-  if (bot && isPolling) {
+  if (bot) {
+    console.log('[Bot] Actively stopping current bot polling and cleaning up resources...');
     try {
-      console.log('[Bot] Stopping existing bot polling...');
-      bot.stopPolling();
-      isPolling = false;
+      const activeBot = bot;
+      bot = null; // Unlink reference immediately to prevent race conditions
+      if (typeof activeBot.stopPolling === 'function') {
+        await activeBot.stopPolling();
+      }
+      activeBot.removeAllListeners();
     } catch (e: any) {
-      console.error('[Bot] Error stopping old bot polling:', e.message);
+      console.error('[Bot Error] Error stopping polling of previous bot:', e.message);
     }
+    isPolling = false;
   }
+
+  // Grace delay to let Telegram servers process the connection teardown
+  await new Promise(resolve => setTimeout(resolve, 1500));
 
   try {
     console.log(`[Bot] Initializing Telegram Bot with token ending in ...${state.botToken.substring(state.botToken.length - 8 || 0)}`);
@@ -60,7 +69,8 @@ export function initBot() {
           [{ text: '🎁 تنظیمات هدیه و تست رایگان', callback_data: 'admin_test_menu' }],
           [{ text: '📦 مدیریت محصولات فعال', callback_data: 'admin_products_menu' }],
           [{ text: '👥 مدیریت کاربران و فروشنده‌ها', callback_data: 'admin_users_menu' }],
-          [{ text: '📥 دریافت فایل بکاپ (db.json)', callback_data: 'admin_backup' }]
+          [{ text: '📥 تهیه بکاپ امن (رمزگذاری شده)', callback_data: 'admin_backup' }],
+          [{ text: '📤 بازیابی اطلاعات (ری‌استور بکاپ)', callback_data: 'admin_restore_prompt' }]
         ]
       }
     });
@@ -201,9 +211,21 @@ export function initBot() {
         db.updateState({ adminIds: [chatId] });
         bot!.sendMessage(chatId, 'شما به عنوان اولین ادمین ربات تنظیم شدید. برای مدیریت از /admin استفاده کنید.');
       }
+    } else {
+      // Keep username up to date if they changed it
+      if (msg.from?.username && user.username !== msg.from.username) {
+        user.username = msg.from.username;
+        db.saveUser(user);
+      }
     }
 
-    bot!.sendMessage(chatId, 'به ربات خدمات VPN ما خوش آمدید!\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:', {
+    const startMsg = `👋 سلام به ربات خدمات VPN فوق سریع ما خوش آمدید!\n\n` +
+      `🆔 شناسه عددی شما (Chat ID):\n\`${chatId}\`\n\n` +
+      `💡 جهت ثبت مدیریت، می‌توانید شناسه فوق را در داشبورد تحت وب کپی و ذخیره نمایید.\n\n` +
+      `لطفاً یکی از گزینه‌های زیر را انتخاب کنید:`;
+
+    bot!.sendMessage(chatId, startMsg, {
+      parse_mode: 'Markdown',
       reply_markup: {
         keyboard: [
           [{ text: '🎁 تست رایگان' }, { text: '🛒 خرید سرویس' }],
@@ -405,11 +427,75 @@ export function initBot() {
         sendUsersMenu(chatId);
         return;
       }
+
+      if (sessionType === 'get_backup_password') {
+        const backupPassword = text.trim();
+        bot!.sendMessage(chatId, '⏳ در حال ساخت فایل پشتیبان رمزگذاری شده...');
+        try {
+          const rawData = fs.readFileSync(path.join(process.cwd(), 'db.json'), 'utf8');
+          const encryptedPayload = encryptData(rawData, backupPassword);
+          const backupFileName = `sanaei_backup_${Date.now()}.json`;
+          const backupPath = path.join(process.cwd(), backupFileName);
+          
+          fs.writeFileSync(backupPath, encryptedPayload, 'utf8');
+          
+          await bot!.sendDocument(chatId, backupPath, {
+            caption: `📥 فایل بکاپ رمزگذاری شده با موفقیت تولید شد.\n\n🔑 رمز فایل بکاپ شما: *${backupPassword}*\n\n⚠️ حتما این فایل و رمز را در جایی مطمئن یادداشت و نگهداری کنید. جهت بازیابی اطلاعات، کافیست همین فایل .json را به ربات ارسال فرمایید.`,
+            parse_mode: 'Markdown'
+          });
+          
+          try {
+            fs.unlinkSync(backupPath);
+          } catch (e) {}
+        } catch (err: any) {
+          bot!.sendMessage(chatId, `❌ خطا در ایجاد فایل پشتیبان: ${err.message}`);
+        }
+        return;
+      }
+
+      if (sessionType && sessionType.startsWith('restore_pass_')) {
+        const fileId = sessionType.replace('restore_pass_', '');
+        const backupPassword = text.trim();
+        bot!.sendMessage(chatId, '⏳ در حال دریافت و رمزگشایی فایل پشتیبان...');
+        try {
+          const file = await bot!.getFile(fileId);
+          const dUrl = `https://api.telegram.org/file/bot${state.botToken}/${file.file_path}`;
+          const res = await axios.get(dUrl);
+          
+          let fileData = res.data;
+          if (typeof fileData === 'object') {
+            fileData = JSON.stringify(fileData);
+          }
+          
+          const decryptedData = decryptData(fileData, backupPassword);
+          const parsed = JSON.parse(decryptedData);
+          
+          if (!parsed.panel || !parsed.users) {
+            throw new Error('محتوای فایل معتبر نمی‌باشد.');
+          }
+          
+          const dbPath = path.join(process.cwd(), 'db.json');
+          fs.writeFileSync(dbPath, JSON.stringify(parsed, null, 2), 'utf8');
+          db.updateState(parsed);
+          
+          bot!.sendMessage(chatId, '✅ بازیابی کامل اطلاعات با موفقیت انجام شد! تمامی کاربران، محصولات، تراکنش‌ها، کانکشن پنل سنایی و تنظیمات ربات با موفقیت جایگذاری و دیتابیس همگام شد. 🎉');
+          
+          setTimeout(() => {
+            initBot();
+          }, 1500);
+        } catch (err: any) {
+          bot!.sendMessage(chatId, `❌ خطا در رمزگشایی و بازیابی فایل: ${err.message}\n\nلطفا مجدداً رمز صحیح را بازنویسی کنید یا فایل بکاپ سالمی ارسال کنید.`);
+        }
+        return;
+      }
     }
 
     if (!text || text.startsWith('/start') || text === '/admin') return;
 
-    if (text === '🎁 تست رایگان') {
+    // Helper to strip any emojis from the message for robust Persian matching
+    const cleanText = text.replace(/[\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD00-\uDFFF]/g, '').trim();
+
+    if (cleanText === 'تست رایگان' || cleanText === 'اکانت تست' || text.includes('تست رایگان')) {
       const user = db.getUser(chatId);
       if (!user) return;
       if (user.testUsed) {
@@ -432,21 +518,21 @@ export function initBot() {
       return;
     }
 
-    if (text === '👤 پروفایل و موجودی') {
+    if (cleanText === 'پروفایل و موجودی' || cleanText === 'پروفایل' || text.includes('پروفایل') || text.includes('موجودی')) {
       const user = db.getUser(chatId);
       if (!user) return;
       bot!.sendMessage(chatId, `👤 کاربر: ${msg.from?.first_name || 'ناشناس'}\n🆔 آیدی: ${chatId}\n💰 موجودی: ${user.balance} تومان\n👥 تعداد زیرمجموعه‌ها: ${user.referralsMade || 0}`);
       return;
     }
 
-    if (text === '📊 پنل همکار (فروشنده)') {
+    if (cleanText === 'پنل همکار (فروشنده)' || cleanText === 'پنل همکار' || text.includes('پنل همکار') || text.includes('همکار') || text.includes('فروشنده')) {
       const user = db.getUser(chatId);
       if (!user || !user.isSeller) return;
       bot!.sendMessage(chatId, `📊 آمار فروش شما:\n\n💰 مجموع فروش: ${(user.totalSales || 0).toLocaleString()} تومان\n📉 بدهی فعلی به ادمین: ${(user.debt || 0).toLocaleString()} تومان\n\nبرای ثبت فروش جدید از منوی اصلی "خرید سرویس" را انتخاب کنید.`);
       return;
     }
 
-    if (text === '🔗 زیرمجموعه‌گیری') {
+    if (cleanText === 'زیرمجموعه‌گیری' || cleanText === 'زیرمجموعه' || text.includes('زیرمجموعه') || text.includes('دعوت')) {
       const me = await bot!.getMe();
       const refLink = `https://t.me/${me.username}?start=ref_${chatId}`;
       const state = db.getState();
@@ -454,7 +540,7 @@ export function initBot() {
       return;
     }
 
-    if (text === '🛒 خرید سرویس') {
+    if (cleanText === 'خرید سرویس' || cleanText === 'خرید اکانت' || text.includes('خرید سرویس')) {
       const state = db.getState();
       if (state.products.length === 0) {
         bot!.sendMessage(chatId, '❌ هیچ محصولی موجود نیست.');
@@ -473,27 +559,27 @@ export function initBot() {
       return;
     }
 
-    // Restore Backup System
+    // Restore Backup System if admin uploads the json document
     if (msg.document) {
       const state = db.getState();
-      if (state.adminIds.includes(chatId) && msg.document.file_name === 'db.json') {
-        try {
-           const fileId = msg.document.file_id;
-           const file = await bot!.getFile(fileId);
-           bot!.sendMessage(chatId, '⏳ در حال بازیابی و ری‌استارت ربات...');
-           
-           const dUrl = `https://api.telegram.org/file/bot${state.botToken}/${file.file_path}`;
-           const res = await axios.get(dUrl);
-           const newData = res.data;
-           
-           fs.writeFileSync(path.join(process.cwd(), 'db.json'), JSON.stringify(newData, null, 2));
-           
-           bot!.sendMessage(chatId, '✅ بکاپ با موفقیت بازیابی شد. لطفاً تغییرات را در پنل وب بررسی کنید.');
-        } catch(e: any) {
-           bot!.sendMessage(chatId, `❌ خطا در بازیابی بکاپ: ${e.message}`);
-        }
+      if (state.adminIds.includes(chatId) && msg.document.file_name?.endsWith('.json')) {
+        adminSession.set(chatId, `restore_pass_${msg.document.file_id}`);
+        bot!.sendMessage(chatId, '📥 فایل پشتیبان دریافت شد.\n\n🔑 لطفا رمز عبور فایل بکاپ را ارسال کُنید تا رمزگشایی و بازیابی اطلاعات انجام شود:');
+        return;
       }
     }
+
+    // Fallback response for unhandled messages to avoid echoing the start message or freezing
+    bot!.sendMessage(chatId, '❓ پیام ارسالی شما شناسایی نشد.\n\nلطفاً از میان گزینه‌های منوی زیر انتخاب نمایید یا روی دکمه مربوطه در پایین صفحه ضربه بزنید:', {
+      reply_markup: {
+        keyboard: [
+          [{ text: '🎁 تست رایگان' }, { text: '🛒 خرید سرویس' }],
+          [{ text: '👤 پروفایل و موجودی' }, { text: '🔗 زیرمجموعه‌گیری' }],
+          ...(db.getUser(chatId)?.isSeller ? [[{ text: '📊 پنل همکار (فروشنده)' }]] : [])
+        ],
+        resize_keyboard: true
+      }
+    });
   });
 
   bot.on('callback_query', async (query) => {
@@ -517,7 +603,16 @@ export function initBot() {
 
     if (data === 'admin_backup') {
       if (isAdmin) {
-        bot!.sendDocument(chatId, path.join(process.cwd(), 'db.json'), { caption: '📥 بکاپ دیتابیس ربات. برای بازیابی، همین فایل را ریپلای کنید (یا در ربات بفرستید).' });
+        adminSession.set(chatId, 'get_backup_password');
+        bot!.sendMessage(chatId, '🔑 لطفا یک رمز عبور دلخواه برای رمزگذاری و محافظت از فایل بکاپ خود وارد کنید:\n\n*(هنگام بازیابی این فایل، وارد کردن این رمز عبور الزامی است)*', { parse_mode: 'Markdown' });
+      }
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'admin_restore_prompt') {
+      if (isAdmin) {
+        bot!.sendMessage(chatId, '📤 *راهنمای بازیابی فایل پشتیبان (ری‌استور)*:\n\nلطفاً فایل پشتیبان با پسوند `.json` را که قبلاً از این ربات یا از پنل وب ادمین دریافت کرده‌اید به همین چت فوروارد یا ارسال کُنید.\n\nپس از دریافت فایل، سیستم رمز عبور بکاپ را جهت رمزگشایی و اعمال نهایی از شما خواهد پرسید.', { parse_mode: 'Markdown' });
       }
       bot!.answerCallbackQuery(query.id);
       return;

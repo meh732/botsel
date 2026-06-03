@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box } from 'lucide-react';
+import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'settings' | 'products' | 'users'>('settings');
@@ -74,6 +74,11 @@ function SettingsView() {
   const [inbounds, setInbounds] = useState<any[]>([]);
   const [adminIdsStr, setAdminIdsStr] = useState('');
 
+  const [backupPassword, setBackupPassword] = useState('');
+  const [restorePassword, setRestorePassword] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
   useEffect(() => {
     fetch('/api/state')
       .then(r => r.json())
@@ -97,7 +102,7 @@ function SettingsView() {
       .map(s => parseInt(s))
       .filter(id => !isNaN(id));
 
-    await fetch('/api/update-settings', {
+    const res = await fetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -108,6 +113,13 @@ function SettingsView() {
         adminIds: parsedAdminIds
       })
     });
+    const data = await res.json();
+    if (data.success) {
+      setState(prevState => ({
+        ...prevState,
+        adminIds: parsedAdminIds
+      }));
+    }
     setSaving(false);
     alert('تنظیمات عمومی با موفقیت ذخیره شد. اگر توکن ربات تغییر کرده، ربات مجدداً راه‌اندازی شد.');
   };
@@ -134,6 +146,81 @@ function SettingsView() {
       }
     } catch(e: any) {
       alert('خطا در ارتباط با پنل. مشخصات، آدرس و یا پورت و فایروال را بررسی کنید.');
+    }
+  };
+
+  const handleDownloadBackup = async () => {
+    if (!backupPassword) {
+      alert('لطفا یک رمز عبور جهت رمزگذاری کانفیگ بکاپ تعیین کنید.');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: backupPassword })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const blob = new Blob([data.payload], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `sanaei_bot_backup_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        alert('خطا در ایجاد پشتیبان: ' + data.message);
+      }
+    } catch (e: any) {
+      alert('خطای اتصال به سرور: ' + e.message);
+    }
+    setActionLoading(false);
+  };
+
+  const handleRestoreBackup = async () => {
+    if (!restorePassword) {
+      alert('لطفا ابتدا رمز عبور فایل بکاپ را وارد کنید.');
+      return;
+    }
+    if (!selectedFile) {
+      alert('لطفا ابتدا فایل بکاپ (.json) را انتخاب نمایید.');
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const fileContent = event.target?.result as string;
+        try {
+          const res = await fetch('/api/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payload: fileContent,
+              password: restorePassword
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            alert('بازیابی کامل اطلاعات ربات و دیتابیس با موفقیت انجام شد! تمامی بخش‌ها لود خواهند شد.');
+            window.location.reload();
+          } else {
+            alert('پشتیبان بازیابی نشد: ' + data.message);
+          }
+        } catch (e: any) {
+          alert('خطا در رمزگشایی بکاپ. رمز وارد شده اشتباه است یا فایل مخدوش شده است.');
+        }
+        setActionLoading(false);
+      };
+      reader.readAsText(selectedFile);
+    } catch(e: any) {
+      alert('خطا در خواندن فایل: ' + e.message);
+      setActionLoading(false);
     }
   };
 
@@ -241,6 +328,75 @@ function SettingsView() {
           <button onClick={savePanel} disabled={saving} className="bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition flex items-center mr-auto">
             <Save className="w-4 h-4 ml-2" /> ذخیره اطلاعات اتصال پنل
           </button>
+        </div>
+      </div>
+
+      {/* Backup and Restore Secured System */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-slate-850">
+          <Download className="w-5 h-5 text-indigo-600" /> پشتیبان‌گیری و بازیابی کل اطلاعات (بکاپ دیتابیس با رمز)
+        </h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 divide-y md:divide-y-0 md:divide-x md:divide-x-reverse divide-slate-200">
+          {/* Download Encrypted Backup column */}
+          <div className="space-y-4 pb-4 md:pb-0">
+            <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">📥 تهیه پشتیبان رمزگذاری شده</h3>
+            <p className="text-xs text-slate-400">یک رمز عبور جهت قفل کردن اطلاعات دیتابیس (امنیتی) وارد نموده و فایل پشتیبان را دانلود نمایید.</p>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">رمز عبور دلخواه برای فایل بکاپ</label>
+              <input 
+                type="password" 
+                value={backupPassword} 
+                onChange={e => setBackupPassword(e.target.value)} 
+                className="w-full px-3 py-1.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-xs" 
+                placeholder="مثلاً MySecuredPass" 
+              />
+            </div>
+            <button 
+              onClick={handleDownloadBackup} 
+              disabled={actionLoading} 
+              className="bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 transition flex items-center text-xs font-medium"
+            >
+              <Download className="w-3.5 h-3.5 ml-1.5" /> دانلود فایل بکاپ (.json)
+            </button>
+          </div>
+
+          {/* Upload and Decrypt Restore column */}
+          <div className="space-y-4 pt-4 md:pt-0 md:pr-4">
+            <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">📤 بازیابی فایل پشتیبان</h3>
+            <p className="text-xs text-slate-400">فایل بکاپ را آپلود کرده و رمز عبور قفل را برای بازگشایی و بازنویسی دیتابیس بنویسید.</p>
+            
+            <div className="space-y-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">انتخاب فایل پشتیبان (.json)</label>
+                <input 
+                  type="file" 
+                  accept=".json" 
+                  onChange={e => setSelectedFile(e.target.files?.[0] || null)} 
+                  className="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer" 
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">رمز عبور فایل جهت بازگشایی</label>
+                <input 
+                  type="password" 
+                  value={restorePassword} 
+                  onChange={e => setRestorePassword(e.target.value)} 
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-xs" 
+                  placeholder="رمز عبور بکاپ" 
+                />
+              </div>
+            </div>
+
+            <button 
+              onClick={handleRestoreBackup} 
+              disabled={actionLoading} 
+              className="bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700 transition flex items-center text-xs font-medium mr-auto"
+            >
+              <Upload className="w-3.5 h-3.5 ml-1.5" /> بازیابی و اعمال بکاپ
+            </button>
+          </div>
         </div>
       </div>
     </div>
