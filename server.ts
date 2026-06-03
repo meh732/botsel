@@ -132,6 +132,15 @@ async function startServer() {
     }
   });
 
+  api.post("/test-panel-connection", async (req, res) => {
+    try {
+       const result = await xui.testConnection();
+       res.json(result);
+    } catch (e: any) {
+       res.json({ success: false, message: e.message });
+    }
+  });
+
   api.post("/backup", (req, res) => {
     try {
       const { password } = req.body;

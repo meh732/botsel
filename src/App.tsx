@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload } from 'lucide-react';
+import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload, Zap, CheckCircle } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'settings' | 'products' | 'users'>('settings');
@@ -258,6 +258,21 @@ function SettingsView() {
       }
     } catch(e: any) {
       alert('خطا در ارتباط با پنل. مشخصات، آدرس و یا پورت و فایروال را بررسی کنید.');
+    }
+  };
+
+  const testConnection = async () => {
+    try {
+      const res = await fetch('/api/test-panel-connection', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('✅ ' + data.message);
+        loadInbounds();
+      } else {
+        alert('❌ خطا: ' + data.message);
+      }
+    } catch (e: any) {
+      alert('خطای شبکه: ' + e.message);
     }
   };
 
@@ -563,9 +578,14 @@ function SettingsView() {
             </div>
           )}
 
-          <button onClick={savePanel} disabled={saving} className="bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition flex items-center mr-auto">
-            <Save className="w-4 h-4 ml-2" /> ذخیره اطلاعات اتصال پنل
-          </button>
+          <div className="flex gap-2 mr-auto">
+            <button onClick={testConnection} className="bg-slate-800 text-white px-4 py-2 rounded-md hover:bg-slate-900 transition flex items-center">
+              <Zap className="w-4 h-4 ml-2" /> تست سریع اتصال
+            </button>
+            <button onClick={savePanel} disabled={saving} className="bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition flex items-center">
+              <Save className="w-4 h-4 ml-2" /> ذخیره اطلاعات اتصال پنل
+            </button>
+          </div>
         </div>
       </div>
 

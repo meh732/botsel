@@ -138,6 +138,23 @@ class XuiClient {
     };
   }
 
+  public async testConnection() {
+    try {
+      const opts = await this.getAuthOptions();
+      // Try to fetch inbounds list as a test
+      const res = await this.client.get(`${opts.baseURL}/panel/api/inbounds/list`, {
+        headers: opts.headers
+      });
+      if (res.data?.success) {
+        return { success: true, message: 'اتصال به پنل با موفقیت برقرار شد.' };
+      }
+      return { success: false, message: res.data?.msg || 'پنل پاسخ ناموفق داد. لطفا مشخصات را چک کنید.' };
+    } catch (e: any) {
+      console.error('[X-UI Test Error]:', e.message);
+      return { success: false, message: e.message };
+    }
+  }
+
   public async getInbounds() {
     try {
       const state = db.getState();
@@ -259,7 +276,6 @@ class XuiClient {
       const subId = uuidv4().replace(/-/g, '').substring(0, 16);
 
       // Multi-Inbound Tags Support (for newer MHSanaei 3x-ui versions)
-      const primaryInboundId = finalInboundIds[0];
       const otherTags: string[] = [];
       if (finalInboundIds.length > 1 && inboundsList.length > 0) {
         finalInboundIds.slice(1).forEach(id => {
@@ -277,7 +293,7 @@ class XuiClient {
         enable: true,
         expiryTime: expiryTime,
         total: totalBytes,
-        totalGB: totalBytes,
+        totalGB: volumeGb,
         limitIp: Number(limitIp) || 0,
         flow: "",
         tgId: telegramId || "",
@@ -304,10 +320,12 @@ class XuiClient {
         `${opts.baseURL}/panel/api/inbounds/client/add`,
       ];
 
+      let lastResponse: any = null;
       let lastError: any = null;
+      let success = false;
+
       for (const url of possibleUrls) {
         try {
-          usedUrl = url;
           console.log(`[X-UI Attempt] Sending POST to: ${url} with Inbound ID: ${primaryInboundId}`);
           
           let res = await this.client.post(url, {
@@ -337,6 +355,7 @@ class XuiClient {
           });
           if (res?.data?.success) {
             success = true;
+            lastResponse = res;
             break;
           }
         } catch (err: any) {
