@@ -632,22 +632,22 @@ function SettingsView() {
 function ProductsView() {
   const [products, setProducts] = useState<any[]>([]);
   const [inbounds, setInbounds] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[] });
+  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[], limitIp: 1 });
 
   useEffect(() => {
     fetch('/api/state')
       .then(r => r.json())
       .then(s => setProducts(s.products || []));
     
-    // Fetch inbounds on load if available
+    // Fetch inbounds on load if available - don't log errors to main console
     fetch('/api/xui-inbounds')
       .then(r => r.json())
       .then(data => {
-        if (data.success) {
+        if (data && data.success) {
           setInbounds(data.inbounds || []);
         }
       })
-      .catch(e => console.log('Could not prefetch inbounds for products dropdown:', e));
+      .catch(() => {});
   }, []);
 
   const addProduct = async () => {
@@ -665,7 +665,7 @@ function ProductsView() {
     if (data.success) {
       setProducts(data.products);
       // Reset form
-      setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] });
+      setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1 });
     }
   };
 
@@ -682,7 +682,7 @@ function ProductsView() {
          
          <div className="space-y-4">
            {/* Row 1 fields */}
-           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
              <div>
                <label className="block text-xs font-semibold text-slate-700 mb-1">نام محصول (پکیج)</label>
                <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="مثال: ۱ ماهه ۵۰ گیگابایت"/>
@@ -692,12 +692,16 @@ function ProductsView() {
                <input type="number" value={form.price} onChange={e=>setForm({...form, price: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
              </div>
              <div>
-               <label className="block text-xs font-semibold text-slate-700 mb-1">حجم پکیج (گیگابایت)</label>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">حجم (GB)</label>
                <input type="number" value={form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
              </div>
              <div>
-               <label className="block text-xs font-semibold text-slate-700 mb-1">مدت زمان اعتبار (روز)</label>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">مدت (روز)</label>
                <input type="number" value={form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
+             </div>
+             <div>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">IP Limit</label>
+               <input type="number" value={form.limitIp} onChange={e=>setForm({...form, limitIp: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
              </div>
            </div>
 
@@ -771,10 +775,11 @@ function ProductsView() {
             <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col hover:shadow-md transition">
                <h3 className="text-lg font-bold text-slate-900 mb-2">{p.name}</h3>
                <div className="text-2xl font-black text-indigo-600 mb-4">{p.price.toLocaleString()} <span className="text-sm font-normal text-slate-500">تومان</span></div>
-               <div className="space-y-2 mb-6 flex-1 text-sm">
-                 <div className="flex justify-between border-b pb-1 text-slate-600"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
-                 <div className="flex justify-between border-b pb-1 text-slate-600"><span>مدت زمان:</span><span className="font-bold text-slate-800">{p.durationDays === 0 ? 'نامحدود' : `${p.durationDays} روز`}</span></div>
-                 <div className="flex justify-between pb-1 text-slate-600">
+               <div className="space-y-2 mb-6 flex-1 text-sm text-slate-700">
+                 <div className="flex justify-between border-b pb-1"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
+                 <div className="flex justify-between border-b pb-1"><span>مدت زمان:</span><span className="font-bold text-slate-800">{p.durationDays === 0 ? 'نامحدود' : `${p.durationDays} روز`}</span></div>
+                 <div className="flex justify-between border-b pb-1"><span>محدودیت کاربر (IP):</span><span className="font-bold text-slate-800">{p.limitIp || 0}</span></div>
+                 <div className="flex justify-between pb-1">
                    <span>اینباندهای پکیج:</span>
                    <span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded text-[11px]">
                      {p.inboundIds && p.inboundIds.length > 0 

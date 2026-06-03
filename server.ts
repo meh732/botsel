@@ -119,9 +119,11 @@ async function startServer() {
   api.get("/xui-inbounds", async (req, res) => {
     try {
       const inbounds = await xui.getInbounds();
-      res.json({ success: true, inbounds });
+      // If it returns empty, it's either empty or failed (but handled gracefully now)
+      res.json({ success: true, inbounds: inbounds || [] });
     } catch (e: any) {
-      res.status(500).json({ success: false, message: e.message });
+      // Still good to have a backup catch although xui.getInbounds now suppresses most errors
+      res.json({ success: false, message: e.message, inbounds: [] });
     }
   });
 
@@ -182,6 +184,10 @@ async function startServer() {
 
     if (product.inboundId !== undefined) {
       product.inboundId = product.inboundId ? parseInt(product.inboundId) : undefined;
+    }
+
+    if (product.limitIp !== undefined) {
+      product.limitIp = parseInt(product.limitIp) || 0;
     }
 
     if (product.inboundIds !== undefined) {

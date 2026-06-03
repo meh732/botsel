@@ -17,6 +17,7 @@ export interface Product {
   durationDays: number;
   inboundId?: number;
   inboundIds?: number[];
+  limitIp?: number;
 }
 
 export interface Purchase {
