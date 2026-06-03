@@ -79,6 +79,101 @@ function SettingsView() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  const [newCouponCode, setNewCouponCode] = useState('');
+  const [newCouponPercent, setNewCouponPercent] = useState(20);
+
+  const handleAddCoupon = async () => {
+    if (!newCouponCode) {
+      alert('لطفا کد تخفیف را وارد کنید.');
+      return;
+    }
+    const code = newCouponCode.trim().toUpperCase();
+    const percent = Number(newCouponPercent);
+    if (isNaN(percent) || percent <= 0 || percent > 100) {
+      alert('درصد تخفیف معتبر نیست (باید بین ۱ تا ۱۰۰ باشد).');
+      return;
+    }
+
+    const currentCoupons = state.coupons || [];
+    if (currentCoupons.some((c: any) => c.code === code)) {
+      alert('این کد تخفیف قبلاً تعریف شده است.');
+      return;
+    }
+
+    const updatedCoupons = [...currentCoupons, { code, discountPercent: percent }];
+    
+    setSaving(true);
+    const parsedAdminIds = adminIdsStr
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s !== '')
+      .map(s => parseInt(s))
+      .filter(id => !isNaN(id));
+
+    const res = await fetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        botToken: state.botToken,
+        freeTestVolumeGb: Number(state.freeTestVolumeGb),
+        freeTestDurationDays: Number(state.freeTestDurationDays),
+        freeTestEnabled: state.freeTestEnabled !== false,
+        freeTestInboundId: state.freeTestInboundId ? Number(state.freeTestInboundId) : undefined,
+        supportUsername: state.supportUsername,
+        referralRewardToman: Number(state.referralRewardToman) || 0,
+        cardNumber: state.cardNumber,
+        cardHolder: state.cardHolder,
+        adminIds: parsedAdminIds,
+        coupons: updatedCoupons
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setState((prev: any) => ({ ...prev, coupons: updatedCoupons }));
+      setNewCouponCode('');
+      alert('کد تخفیف با موفقیت ایجاد شد.');
+    }
+    setSaving(false);
+  };
+
+  const handleDeleteCoupon = async (codeToDelete: string) => {
+    if (!confirm(`آیا از حذف کد تخفیف ${codeToDelete} مطمئن هستید؟`)) return;
+    const currentCoupons = state.coupons || [];
+    const updatedCoupons = currentCoupons.filter((c: any) => c.code !== codeToDelete);
+
+    setSaving(true);
+    const parsedAdminIds = adminIdsStr
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s !== '')
+      .map(s => parseInt(s))
+      .filter(id => !isNaN(id));
+
+    const res = await fetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        botToken: state.botToken,
+        freeTestVolumeGb: Number(state.freeTestVolumeGb),
+        freeTestDurationDays: Number(state.freeTestDurationDays),
+        freeTestEnabled: state.freeTestEnabled !== false,
+        freeTestInboundId: state.freeTestInboundId ? Number(state.freeTestInboundId) : undefined,
+        supportUsername: state.supportUsername,
+        referralRewardToman: Number(state.referralRewardToman) || 0,
+        cardNumber: state.cardNumber,
+        cardHolder: state.cardHolder,
+        adminIds: parsedAdminIds,
+        coupons: updatedCoupons
+      })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setState((prev: any) => ({ ...prev, coupons: updatedCoupons }));
+      alert('کد تخفیف حذف شد.');
+    }
+    setSaving(false);
+  };
+
   useEffect(() => {
     fetch('/api/state')
       .then(r => r.json())
@@ -109,8 +204,14 @@ function SettingsView() {
         botToken: state.botToken,
         freeTestVolumeGb: Number(state.freeTestVolumeGb),
         freeTestDurationDays: Number(state.freeTestDurationDays),
+        freeTestEnabled: state.freeTestEnabled !== false,
+        freeTestInboundId: state.freeTestInboundId ? Number(state.freeTestInboundId) : undefined,
+        supportUsername: state.supportUsername,
         referralRewardToman: Number(state.referralRewardToman) || 0,
-        adminIds: parsedAdminIds
+        cardNumber: state.cardNumber,
+        cardHolder: state.cardHolder,
+        adminIds: parsedAdminIds,
+        coupons: state.coupons || []
       })
     });
     const data = await res.json();
@@ -253,6 +354,27 @@ function SettingsView() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">فعال بودن اکانت تست</label>
+              <select 
+                value={state.freeTestEnabled !== false ? 'true' : 'false'} 
+                onChange={e => setState({...state, freeTestEnabled: e.target.value === 'true'})} 
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="true">فعال (روشن)</option>
+                <option value="false">غیرفعال (خاموش)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">شناسه اینباند اکانت تست</label>
+              <input 
+                type="number" 
+                value={state.freeTestInboundId || ''} 
+                onChange={e => setState({...state, freeTestInboundId: e.target.value ? Number(e.target.value) : undefined})} 
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono" 
+                placeholder="خالی = همان اینباند عمومی"
+              />
+            </div>
+            <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">حجم تست رایگان (گیگابایت)</label>
               <input type="number" value={state.freeTestVolumeGb} onChange={e => setState({...state, freeTestVolumeGb: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
@@ -260,7 +382,19 @@ function SettingsView() {
               <label className="block text-sm font-medium text-slate-700 mb-1">مدت زمان تست رایگان (روز)</label>
               <input type="number" value={state.freeTestDurationDays} onChange={e => setState({...state, freeTestDurationDays: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
-            <div className="col-span-2">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">شماره کارت بانکی (کارت به کارت)</label>
+              <input type="text" value={state.cardNumber || ''} onChange={e => setState({...state, cardNumber: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-left" dir="ltr" placeholder="۶۰۳۷۹۹۷۹۱۲۳۴۵۶۷۸" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">نام صاحب کارت حساب</label>
+              <input type="text" value={state.cardHolder || ''} onChange={e => setState({...state, cardHolder: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 text-right" placeholder="مدیریت حساب" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">آیدی پشتیبانی تلگرام (بدون @)</label>
+              <input type="text" value={state.supportUsername || ''} onChange={e => setState({...state, supportUsername: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 text-left font-mono" dir="ltr" placeholder="SanaeiSupportAdmin" />
+            </div>
+            <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">پاداش معرفی زیرمجموعه (تومان)</label>
               <input type="number" value={state.referralRewardToman || 0} onChange={e => setState({...state, referralRewardToman: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
@@ -289,6 +423,11 @@ function SettingsView() {
               <label className="block text-sm font-medium text-slate-700 mb-1">رمز عبور ورود به پنل</label>
               <input type="password" value={state.panel.password || ''} onChange={e => setState({...state, panel: {...state.panel, password: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">کلید API Key اختصاصی پنل جدید (جهت عدم نیاز به نام کاربری و رمز عبور)</label>
+            <input type="text" value={state.panel.apiKey || ''} onChange={e => setState({...state, panel: {...state.panel, apiKey: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-left" dir="ltr" placeholder="vXg7hY..." />
           </div>
 
           <div className="flex items-end gap-4">
@@ -321,13 +460,59 @@ function SettingsView() {
                     ))}
                   </tbody>
                </table>
-               <p className="text-xs text-emerald-600 p-2 text-center font-medium">💡 با کلیک روی هر ردیف بالا، شناسه آن به صورت اتوماتیک انتخاب می‌شود.</p>
+               <p className="text-xs text-emerald-600 p-2 text-center font-medium">💡 با کلیک روی هر ردیف بالا, شناسه آن به صورت اتوماتیک انتخاب می‌شود.</p>
             </div>
           )}
 
           <button onClick={savePanel} disabled={saving} className="bg-emerald-600 text-white px-4 py-2 rounded-md hover:bg-emerald-700 transition flex items-center mr-auto">
             <Save className="w-4 h-4 ml-2" /> ذخیره اطلاعات اتصال پنل
           </button>
+        </div>
+      </div>
+
+      {/* Coupons/Discounts Management Secured Card */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> مدیریت کدهای تخفیف و کوپن‌ها (Tickets)</h2>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end bg-slate-50 p-4 rounded-lg border">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">کد تخفیف (کوپن)</label>
+              <input value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} type="text" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono text-left" placeholder="مثال: OFF50" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">درصد تخفیف (٪)</label>
+              <input value={newCouponPercent} onChange={e => setNewCouponPercent(Number(e.target.value))} type="number" min="1" max="100" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono" placeholder="20" />
+            </div>
+            <div>
+              <button onClick={handleAddCoupon} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-medium text-xs transition">ایجاد کد تخفیف جدید</button>
+            </div>
+          </div>
+
+          <div className="border rounded-md overflow-hidden">
+             <table className="w-full text-sm text-right">
+                <thead className="bg-slate-100 text-slate-600 border-b">
+                  <tr>
+                    <th className="px-4 py-2 font-medium">کد تخفیف</th>
+                    <th className="px-4 py-2 font-medium">درصد تخفیف</th>
+                    <th className="px-4 py-2 font-medium text-left">عملیات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(state.coupons || []).map((c: any) => (
+                    <tr key={c.code} className="border-b last:border-0 hover:bg-slate-50 transition">
+                      <td className="px-4 py-2 font-mono font-bold text-slate-800">{c.code}</td>
+                      <td className="px-4 py-2 font-mono text-indigo-600 font-bold">{c.discountPercent}٪</td>
+                      <td className="px-4 py-2 text-left">
+                        <button onClick={() => handleDeleteCoupon(c.code)} className="text-red-600 hover:text-red-800 p-1 font-medium text-xs transition">حذف</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {(!state.coupons || state.coupons.length === 0) && (
+                    <tr><td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">هیچ کد تخفیفی تعریف نشده است.</td></tr>
+                  )}
+                </tbody>
+             </table>
+          </div>
         </div>
       </div>
 

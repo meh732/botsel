@@ -8,27 +8,48 @@ class XuiClient {
   private cookie: string = '';
 
   constructor() {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     this.client = axios.create({
       timeout: 15000,
-      httpsAgent: new https.Agent({ rejectUnauthorized: false }), // Ignore self-signed certificates
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*'
+      },
+      httpsAgent: new https.Agent({ 
+        rejectUnauthorized: false,
+        keepAlive: true
+      }), // Ignore self-signed certificates
     });
   }
 
   private async getAuthOptions() {
     const state = db.getState();
     const panel = state.panel;
-    if (!panel.url || !panel.username || !panel.password) {
-      throw new Error('مشخصات پنل متصل نشده است. لطفا آدرس، نام کاربری و رمز ورود را در بخش تنظیمات وارد نمایید.');
+    if (!panel.url || (!panel.apiKey && (!panel.username || !panel.password))) {
+      throw new Error('مشخصات پنل متصل نشده است. لطفا آدرس، یا کلید API یا نام کاربری و رمز ورود را در بخش تنظیمات وارد نمایید.');
     }
     
     // Auto-prepend http:// if no protocol is defined
-    let formattedUrl = panel.url.trim();
+    let formattedUrl = panel.url.trim().replace(/\s/g, '');
     if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
       formattedUrl = 'http://' + formattedUrl;
     }
     
     // Create base URL without trailing slash
     const baseURL = formattedUrl.endsWith('/') ? formattedUrl.slice(0, -1) : formattedUrl;
+
+    if (panel.apiKey) {
+      console.log(`[X-UI] Authenticating using API Key with baseURL: ${baseURL}`);
+      return {
+        baseURL,
+        headers: {
+          'Api-Key': panel.apiKey.trim(),
+          'X-Api-Key': panel.apiKey.trim(),
+          'Authorization': `Bearer ${panel.apiKey.trim()}`,
+          'Accept': 'application/json, text/plain, */*'
+        }
+      };
+    }
 
     if (!this.cookie) {
       console.log(`[X-UI] Connection attempt to: ${baseURL}/login using username: ${panel.username}`);
@@ -58,8 +79,8 @@ class XuiClient {
         console.log(`[X-UI] JSON login failed or unreachable, trying Form URL-encoded fallback login...`);
         try {
           const params = new URLSearchParams();
-          params.append('username', panel.username);
-          params.append('password', panel.password);
+          params.append('username', panel.username || '');
+          params.append('password', panel.password || '');
           
           const resForm = await this.client.post(`${baseURL}/login`, params, {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -79,12 +100,23 @@ class XuiClient {
       }
       
       if (res && res.data?.success) {
-        const cookies = res.headers['set-cookie'];
+        const cookiesHeader = res.headers['set-cookie'] || res.headers['Set-Cookie'] || res.headers['SET-COOKIE'];
+        const cookies = Array.isArray(cookiesHeader) ? cookiesHeader : (cookiesHeader ? [cookiesHeader] : undefined);
         if (cookies && cookies.length > 0) {
           this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
           console.log('[X-UI] Logged in successfully. Saved Session Cookies:', this.cookie);
         } else {
-          throw new Error('پنل جواب مثبت داد اما کوکی دریافت نشد. لطفا پسوند آدرس پنل (basePath) را چک کنید.');
+          // If we logged in successfully but set-cookie was empty, check keys case-insensitively
+          const keys = Object.keys(res.headers);
+          const cookieKey = keys.find(k => k.toLowerCase() === 'set-cookie');
+          const fallbackCookies = cookieKey ? res.headers[cookieKey] : undefined;
+          const finalCookies = Array.isArray(fallbackCookies) ? fallbackCookies : (fallbackCookies ? [fallbackCookies] : undefined);
+          if (finalCookies && finalCookies.length > 0) {
+            this.cookie = finalCookies.map(c => c.split(';')[0]).join('; ');
+            console.log('[X-UI] Logged in with case-insensitive cookies:', this.cookie);
+          } else {
+            console.warn('[X-UI] Login success but Cookie header empty. Proceeding with empty session cookie.');
+          }
         }
       } else {
         throw new Error(lastErrorMsg || 'خطا در ورود به پنل سنایی. لطفا آدرس، پورت و فایروال را بررسی کنید.');

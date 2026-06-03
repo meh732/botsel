@@ -5,7 +5,7 @@ import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { createServer as createViteServer } from "vite";
 import { db } from "./server/db.js";
-import { initBot } from "./server/bot.js";
+import { initBot, sendBroadcast } from "./server/bot.js";
 import { xui } from "./server/xui.js";
 import { encryptData, decryptData } from "./server/crypto.js";
 
@@ -36,14 +36,35 @@ async function startServer() {
   });
 
   api.post("/update-settings", (req, res) => {
-    const { botToken, freeTestVolumeGb, freeTestDurationDays, referralRewardToman, adminIds } = req.body;
-    
-    const updates: any = { 
+    const { 
       botToken, 
       freeTestVolumeGb, 
       freeTestDurationDays, 
-      referralRewardToman 
+      freeTestEnabled, 
+      freeTestInboundId, 
+      referralRewardToman, 
+      adminIds, 
+      cardNumber, 
+      cardHolder, 
+      supportUsername, 
+      coupons 
+    } = req.body;
+    
+    const updates: any = { 
+      botToken, 
+      freeTestVolumeGb: Number(freeTestVolumeGb) || 0, 
+      freeTestDurationDays: Number(freeTestDurationDays) || 0,
+      freeTestEnabled: freeTestEnabled !== undefined ? Boolean(freeTestEnabled) : true,
+      referralRewardToman: Number(referralRewardToman) || 0 
     };
+
+    if (cardNumber !== undefined) updates.cardNumber = cardNumber;
+    if (cardHolder !== undefined) updates.cardHolder = cardHolder;
+    if (supportUsername !== undefined) updates.supportUsername = supportUsername;
+    if (coupons !== undefined) updates.coupons = coupons;
+    if (freeTestInboundId !== undefined) {
+      updates.freeTestInboundId = freeTestInboundId ? parseInt(freeTestInboundId) : undefined;
+    }
 
     if (adminIds !== undefined) {
       updates.adminIds = Array.isArray(adminIds)
@@ -51,7 +72,6 @@ async function startServer() {
         : [];
     }
 
-    const oldToken = db.getState().botToken;
     db.updateState(updates);
     
     // Start or restart bot if token is present
@@ -63,7 +83,7 @@ async function startServer() {
   });
 
   api.post("/update-panel", async (req, res) => {
-    const { url, username, password, inboundId } = req.body;
+    const { url, username, password, inboundId, apiKey } = req.body;
     const currentState = db.getState();
     
     const newPanel = { ...currentState.panel };
@@ -71,9 +91,23 @@ async function startServer() {
     if (username !== undefined) newPanel.username = username;
     if (password && password !== '********') newPanel.password = password;
     if (inboundId !== undefined) newPanel.inboundId = parseInt(inboundId) || undefined;
+    if (apiKey !== undefined) newPanel.apiKey = apiKey;
 
     db.updateState({ panel: newPanel });
     res.json({ success: true });
+  });
+
+  api.post("/broadcast", async (req, res) => {
+    const { message } = req.body;
+    if (!message) {
+      return res.status(400).json({ success: false, message: 'متن پیام الزامی است.' });
+    }
+    try {
+      const stats = await sendBroadcast(message);
+      res.json({ success: true, ...stats });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در ارسال پیام همگانی.' });
+    }
   });
 
   api.get("/xui-inbounds", async (req, res) => {

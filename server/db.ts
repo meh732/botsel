@@ -6,6 +6,7 @@ export interface PanelConfig {
   username?: string;
   password?: string;
   inboundId?: number;
+  apiKey?: string;
 }
 
 export interface Product {
@@ -15,6 +16,16 @@ export interface Product {
   volumeGb: number; // Gigabytes
   durationDays: number;
   inboundId?: number;
+}
+
+export interface Purchase {
+  id: string;
+  name: string;
+  price: number;
+  subUrl: string;
+  volumeGb: number;
+  durationDays: number;
+  createdAt: string;
 }
 
 export interface User {
@@ -28,6 +39,12 @@ export interface User {
   isSeller?: boolean;
   debt?: number;
   totalSales?: number;
+  purchases?: Purchase[];
+}
+
+export interface Coupon {
+  code: string;
+  discountPercent: number; // e.g. 15 for 15%
 }
 
 export interface AppState {
@@ -37,8 +54,14 @@ export interface AppState {
   users: User[];
   freeTestVolumeGb: number;
   freeTestDurationDays: number;
+  freeTestEnabled: boolean;
+  freeTestInboundId?: number;
   adminIds: number[];
   referralRewardToman: number;
+  cardNumber?: string;
+  cardHolder?: string;
+  supportUsername?: string;
+  coupons: Coupon[];
 }
 
 const DB_PATH = path.join(process.cwd(), 'db.json');
@@ -50,8 +73,13 @@ const defaultState: AppState = {
   users: [],
   freeTestVolumeGb: 1,
   freeTestDurationDays: 3,
+  freeTestEnabled: true,
   adminIds: [],
-  referralRewardToman: 0
+  referralRewardToman: 0,
+  cardNumber: '۶۰۳۷۹۹۷۹۱۲۳۴۵۶۷۸',
+  cardHolder: 'نام مدیر حساب',
+  supportUsername: '',
+  coupons: []
 };
 
 class Database {
