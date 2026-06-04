@@ -134,8 +134,22 @@ async function startServer() {
 
   api.post("/test-panel-connection", async (req, res) => {
     try {
-       const result = await xui.testConnection();
-       res.json(result);
+      const { url, username, password, apiKey } = req.body;
+      let result;
+      
+      if (url) {
+        // Create a temporary state for testing
+        const tempXui = new (xui.constructor as any)();
+        // Manually patch state for this test if possible, or just update the DB temporarily
+        // But cleaner is to pass the credentials to testConnection
+        console.log(`[X-UI Test] Running test with provided credentials for url: ${url}`);
+        
+        // Let's modify xui.testConnection to take optional params
+        result = await (xui as any).testConnection({ url, username, password, apiKey });
+      } else {
+        result = await xui.testConnection();
+      }
+      res.json(result);
     } catch (e: any) {
        res.json({ success: false, message: e.message });
     }

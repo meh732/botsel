@@ -263,7 +263,11 @@ function SettingsView() {
 
   const testConnection = async () => {
     try {
-      const res = await fetch('/api/test-panel-connection', { method: 'POST' });
+      const res = await fetch('/api/test-panel-connection', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state.panel)
+      });
       const data = await res.json();
       if (data.success) {
         alert('✅ ' + data.message);

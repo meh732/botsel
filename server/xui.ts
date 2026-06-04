@@ -22,9 +22,9 @@ class XuiClient {
     });
   }
 
-  private async getAuthOptions() {
+  private async getAuthOptions(panelOverride?: any) {
     const state = db.getState();
-    const panel = state.panel;
+    const panel = panelOverride || state.panel;
     if (!panel.url || (!panel.apiKey && (!panel.username || !panel.password))) {
       throw new Error('مشخصات پنل متصل نشده است. لطفا آدرس، یا کلید API یا نام کاربری و رمز ورود را در بخش تنظیمات وارد نمایید.');
     }
@@ -38,47 +38,67 @@ class XuiClient {
     // Create base URL without trailing slash
     let baseURL = formattedUrl.endsWith('/') ? formattedUrl.slice(0, -1) : formattedUrl;
     
-    // Auto-fix common mistake: user entering URL with /panel at the end
-    if (baseURL.toLowerCase().endsWith('/panel')) {
-      console.log(`[X-UI] Normalizing URL: removed trailing /panel from ${baseURL}`);
-      baseURL = baseURL.slice(0, -6);
+    // Auto-fix common mistakes: user entering URL with /panel or /api at the end
+    const commonSuffixes = ['/panel', '/api', '/panel/api'];
+    for (const suffix of commonSuffixes) {
+        if (baseURL.toLowerCase().endsWith(suffix)) {
+            console.log(`[X-UI] Normalizing URL: removed trailing ${suffix} from ${baseURL}`);
+            baseURL = baseURL.slice(0, -suffix.length);
+        }
     }
 
     if (panel.apiKey) {
       const apiKey = panel.apiKey.trim();
       console.log(`[X-UI] Authenticating using API Key with baseURL: ${baseURL}`);
-      // API Keys usually don't need discovery, but we check both /panel/api and /api in methods
-      return { baseURL, headers: { 'Api-Key': apiKey, 'X-Api-Key': apiKey, 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json, text/plain, */*' } };
+      return { 
+        baseURL, 
+        headers: { 
+          'Api-Key': apiKey, 
+          'X-Api-Key': apiKey, 
+          'Authorization': `Bearer ${apiKey}`, 
+          'Accept': 'application/json' 
+        } 
+      };
     }
 
     if (!this.cookie) {
+      console.log(`[X-UI] No session. Trying login at: ${baseURL}`);
       const loginPaths = ['/login', '/panel/login'];
       let loginSuccess = false;
       let lastLoginError = '';
 
       for (const loginPath of loginPaths) {
         try {
-          console.log(`[X-UI Attempt] Login at: ${baseURL}${loginPath}`);
+          console.log(`[X-UI Attempt] Login probe: ${baseURL}${loginPath}`);
           
           // Try JSON
-          let res = await this.client.post(`${baseURL}${loginPath}`, { username: panel.username, password: panel.password }, { headers: { 'Content-Type': 'application/json' }, validateStatus: () => true });
+          let res = await this.client.post(`${baseURL}${loginPath}`, { 
+            username: panel.username, 
+            password: panel.password 
+          }, { 
+            headers: { 'Content-Type': 'application/json' }, 
+            validateStatus: () => true 
+          });
           
           // Try Form if JSON failed
           if (!res.data?.success) {
             const params = new URLSearchParams();
             params.append('username', panel.username || '');
             params.append('password', panel.password || '');
-            res = await this.client.post(`${baseURL}${loginPath}`, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true });
+            res = await this.client.post(`${baseURL}${loginPath}`, params, { 
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, 
+              validateStatus: () => true 
+            });
           }
 
           if (res.data?.success) {
             const cookiesHeader = res.headers['set-cookie'] || res.headers['Set-Cookie'];
-            const cookies = Array.isArray(cookiesHeader) ? cookiesHeader : (cookiesHeader ? [cookiesHeader] : undefined);
-            if (cookies && cookies.length > 0) {
-              this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
-              loginSuccess = true;
-              console.log(`[X-UI Success] Logged in via ${loginPath}`);
-              break;
+            if (cookiesHeader) {
+                const cookies = Array.isArray(cookiesHeader) ? cookiesHeader : [cookiesHeader];
+                this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
+                loginSuccess = true;
+                console.log(`[X-UI Success] Logged in via ${loginPath}`);
+                break;
             }
           }
           lastLoginError = res.data?.msg || 'نام کاربری یا رمز عبور اشتباه است.';
@@ -88,22 +108,28 @@ class XuiClient {
       }
 
       if (!loginSuccess) {
-        throw new Error(lastLoginError || 'خطا در ورود به پنل سنایی. لطفا آدرس و مشخصات را بررسی کنید.');
+        throw new Error(lastLoginError || 'خطا در ورود به پنل. لطفا آدرس و مشخصات را بررسی کنید.');
       }
     }
     
     return {
       baseURL,
       headers: {
-        'Cookie': this.cookie
+        'Cookie': this.cookie,
+        'Accept': 'application/json, text/plain, */*'
       }
     };
   }
 
-  public async testConnection() {
+  public async testConnection(panelOverride?: any) {
     try {
-      const opts = await this.getAuthOptions();
-      const paths = ['/panel/api/inbounds/list', '/api/inbounds/list'];
+      const opts = await this.getAuthOptions(panelOverride);
+      const paths = [
+        '/panel/api/inbounds/list',
+        '/api/inbounds/list',
+        '/xui/api/inbounds/list',
+        '/panel/inbounds/list'
+      ];
       
       let lastError = null;
       for (const path of paths) {
@@ -111,23 +137,24 @@ class XuiClient {
           console.log(`[X-UI Test] Probing: ${opts.baseURL}${path}`);
           const res = await this.client.get(`${opts.baseURL}${path}`, {
             headers: opts.headers,
-            validateStatus: () => true
+            validateStatus: () => true,
+            timeout: 5000
           });
           
-          if (res.data?.success) {
+          if (res.data?.success || (res.status === 200 && Array.isArray(res.data?.obj))) {
             return { 
               success: true, 
-              message: `اتصال برقرار شد. مسیر شناسایی شده: ${path}`,
+              message: `اتصال برقرار شد. مسیر معتبر: ${path}`,
               path: path
             };
           }
-          lastError = res.data?.msg || 'پاسخ ناموفق';
+          lastError = res.data?.msg || `وضعیت ${res.status}`;
         } catch (e: any) {
           lastError = e.message;
         }
       }
       
-      return { success: false, message: `خطا در برقراری ارتباط: ${lastError}` };
+      return { success: false, message: `پنل در این آدرس شناسایی نشد. آخرین خطا: ${lastError}` };
     } catch (e: any) {
       console.error('[X-UI Test Error]:', e.message);
       return { success: false, message: e.message };
@@ -143,7 +170,12 @@ class XuiClient {
       }
 
       const opts = await this.getAuthOptions();
-      const paths = ['/panel/api/inbounds/list', '/api/inbounds/list'];
+      const paths = [
+        '/panel/api/inbounds/list',
+        '/api/inbounds/list',
+        '/xui/api/inbounds/list',
+        '/panel/inbounds/list'
+      ];
       
       for (const path of paths) {
         try {
@@ -151,16 +183,15 @@ class XuiClient {
             headers: opts.headers,
             validateStatus: () => true
           });
-          if (res.data?.success) {
+          if (res.data?.success || (res.status === 200 && Array.isArray(res.data?.obj))) {
             return res.data.obj || [];
           }
         } catch (e) {
-          // Continue to next path
+          // Continue
         }
       }
       return [];
     } catch (e: any) {
-      console.error('[X-UI Error] Failed to get inbounds:', e?.message || e);
       this.cookie = ''; 
       return [];
     }
@@ -302,8 +333,12 @@ class XuiClient {
         `${opts.baseURL}/api/inbounds/addclient`,
         `${opts.baseURL}/panel/api/inbounds/client/add`,
         `${opts.baseURL}/api/inbounds/client/add`,
-        `${opts.baseURL}/panel/api/inbound/addClient`, // Some forks use singular
+        `${opts.baseURL}/panel/api/inbound/addClient`,
         `${opts.baseURL}/api/inbound/addClient`,
+        `${opts.baseURL}/panel/inbounds/addclient`,
+        `${opts.baseURL}/panel/inbound/addclient`,
+        `${opts.baseURL}/api/inbound/addclient`,
+        `${opts.baseURL}/api/inbounds/client/add`,
       ];
 
       let lastResponse: any = null;
@@ -312,26 +347,25 @@ class XuiClient {
 
       for (const url of possibleUrls) {
         try {
-          console.log(`[X-UI Attempt] Sending POST to: ${url} with Inbound ID: ${primaryInboundId}`);
+          console.log(`[X-UI Attempt] Account creation probe: ${url} | Inbound ID: ${primaryInboundId}`);
           
           let res = await this.client.post(url, {
             id: Number(primaryInboundId),
             settings: JSON.stringify(settings)
           }, {
             headers: { ...opts.headers, 'Content-Type': 'application/json' },
-            validateStatus: () => true
+            validateStatus: () => true,
+            timeout: 10000
           });
           
           lastResponse = res;
-          console.log(`[X-UI Response] URL: ${url} | Status: ${res?.status} | Data:`, JSON.stringify(res?.data));
-
           if (res?.data?.success) {
             isSuccess = true;
+            console.log(`[X-UI Success] Created client via: ${url}`);
             break;
           }
 
-          // Fallback: Try with settings as an object (not stringified)
-          console.log(`[X-UI Info] Trying with object settings fallback...`);
+          // Fallback: settings as object
           res = await this.client.post(url, {
             id: Number(primaryInboundId),
             settings: settings
@@ -342,28 +376,30 @@ class XuiClient {
           if (res?.data?.success) {
             isSuccess = true;
             lastResponse = res;
+            console.log(`[X-UI Success] Created client via: ${url} (Object Mode)`);
             break;
           }
         } catch (err: any) {
           lastError = err;
-          console.error(`[X-UI Loop Error] URL ${url} failed:`, err.message);
         }
       }
 
       if (!isSuccess) {
         let errorMsg = lastResponse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.';
-        if (lastResponse?.status === 404) errorMsg = 'آدرس API پنل پیدا نشد (404). لطفا آدرس پنل را چک کنید.';
+        if (lastResponse?.status === 404) errorMsg = 'آدرس API پنل پیدا نشد (404). لطفا آدرس پنل یا Web Base Path را چک کنید.';
         if (lastResponse?.status === 401 || lastResponse?.status === 403) errorMsg = 'خطای دسترسی (401/403). کلید API یا نام کاربری اشتباه است.';
-        
-        console.error(`[X-UI Fatal] All URLs failed. Msg: ${errorMsg}`);
         throw new Error(errorMsg);
       }
 
+      const domain = new URL(state.panel.url).hostname;
       const subPath = state.panel.url.endsWith('/') ? state.panel.url : state.panel.url + '/';
+      const subUrlStr = `${subPath}sub/${subId}`;
+
       return {
         uuid: clientId,
         email: email,
-        subUrl: `${subPath}sub/${subId}`
+        subUrl: subUrlStr,
+        vlessUrl: `vless://${clientId}@${domain}:443?type=grpc&serviceName=grpc&security=tls&sni=${domain}#${email}`,
       };
     } catch (e: any) {
       console.error('XUI AddClient Final Error:', e.message);
