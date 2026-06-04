@@ -47,86 +47,48 @@ class XuiClient {
     if (panel.apiKey) {
       const apiKey = panel.apiKey.trim();
       console.log(`[X-UI] Authenticating using API Key with baseURL: ${baseURL}`);
-      return {
-        baseURL,
-        headers: {
-          'Api-Key': apiKey,
-          'X-Api-Key': apiKey,
-          'Authorization': `Bearer ${apiKey}`,
-          'Accept': 'application/json, text/plain, */*'
-        }
-      };
+      // API Keys usually don't need discovery, but we check both /panel/api and /api in methods
+      return { baseURL, headers: { 'Api-Key': apiKey, 'X-Api-Key': apiKey, 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json, text/plain, */*' } };
     }
 
     if (!this.cookie) {
-      console.log(`[X-UI] Connection attempt to: ${baseURL}/login using username: ${panel.username}`);
-      
-      let lastErrorMsg = '';
-      let res;
-      try {
-        // Try JSON login post first
-        res = await this.client.post(`${baseURL}/login`, {
-          username: panel.username,
-          password: panel.password
-        }, {
-          headers: { 'Content-Type': 'application/json' },
-          validateStatus: () => true
-        });
-        console.log(`[X-UI] JSON login response status: ${res.status}, success: ${res.data?.success}`, JSON.stringify(res.data));
-        if (!res.data?.success) {
-          lastErrorMsg = res.data?.msg || 'اطلاعات کاربری اشتباه است.';
-        }
-      } catch (jsonErr: any) {
-        console.error(`[X-UI] JSON login threw exception: ${jsonErr.message}`);
-        lastErrorMsg = `خطای اتصال شبکه: ${jsonErr.message}`;
-      }
-      
-      // Fallback: Try URL-encoded post (required by some MHSanaei/franz versions)
-      if (!res || !res.data?.success) {
-        console.log(`[X-UI] JSON login failed or unreachable, trying Form URL-encoded fallback login...`);
+      const loginPaths = ['/login', '/panel/login'];
+      let loginSuccess = false;
+      let lastLoginError = '';
+
+      for (const loginPath of loginPaths) {
         try {
-          const params = new URLSearchParams();
-          params.append('username', panel.username || '');
-          params.append('password', panel.password || '');
+          console.log(`[X-UI Attempt] Login at: ${baseURL}${loginPath}`);
           
-          const resForm = await this.client.post(`${baseURL}/login`, params, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            validateStatus: () => true
-          });
-          console.log(`[X-UI] Form login response status: ${resForm.status}, success: ${resForm.data?.success}`, JSON.stringify(resForm.data));
-          if (resForm.data?.success) {
-            res = resForm;
-            lastErrorMsg = ''; // Reset on success
-          } else {
-            lastErrorMsg = resForm.data?.msg || lastErrorMsg || 'نام کاربری یا رمز عبور اشتباه است.';
+          // Try JSON
+          let res = await this.client.post(`${baseURL}${loginPath}`, { username: panel.username, password: panel.password }, { headers: { 'Content-Type': 'application/json' }, validateStatus: () => true });
+          
+          // Try Form if JSON failed
+          if (!res.data?.success) {
+            const params = new URLSearchParams();
+            params.append('username', panel.username || '');
+            params.append('password', panel.password || '');
+            res = await this.client.post(`${baseURL}${loginPath}`, params, { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, validateStatus: () => true });
           }
-        } catch (formErr: any) {
-          console.error(`[X-UI] Form/fallback login threw exception: ${formErr.message}`);
-          lastErrorMsg = lastErrorMsg || `خطای اتصال شبکه (فرم): ${formErr.message}`;
+
+          if (res.data?.success) {
+            const cookiesHeader = res.headers['set-cookie'] || res.headers['Set-Cookie'];
+            const cookies = Array.isArray(cookiesHeader) ? cookiesHeader : (cookiesHeader ? [cookiesHeader] : undefined);
+            if (cookies && cookies.length > 0) {
+              this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
+              loginSuccess = true;
+              console.log(`[X-UI Success] Logged in via ${loginPath}`);
+              break;
+            }
+          }
+          lastLoginError = res.data?.msg || 'نام کاربری یا رمز عبور اشتباه است.';
+        } catch (e: any) {
+          lastLoginError = e.message;
         }
       }
-      
-      if (res && res.data?.success) {
-        const cookiesHeader = res.headers['set-cookie'] || res.headers['Set-Cookie'] || res.headers['SET-COOKIE'];
-        const cookies = Array.isArray(cookiesHeader) ? cookiesHeader : (cookiesHeader ? [cookiesHeader] : undefined);
-        if (cookies && cookies.length > 0) {
-          this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
-          console.log('[X-UI] Logged in successfully. Saved Session Cookies:', this.cookie);
-        } else {
-          // If we logged in successfully but set-cookie was empty, check keys case-insensitively
-          const keys = Object.keys(res.headers);
-          const cookieKey = keys.find(k => k.toLowerCase() === 'set-cookie');
-          const fallbackCookies = cookieKey ? res.headers[cookieKey] : undefined;
-          const finalCookies = Array.isArray(fallbackCookies) ? fallbackCookies : (fallbackCookies ? [fallbackCookies] : undefined);
-          if (finalCookies && finalCookies.length > 0) {
-            this.cookie = finalCookies.map(c => c.split(';')[0]).join('; ');
-            console.log('[X-UI] Logged in with case-insensitive cookies:', this.cookie);
-          } else {
-            console.warn('[X-UI] Login success but Cookie header empty. Proceeding with empty session cookie.');
-          }
-        }
-      } else {
-        throw new Error(lastErrorMsg || 'خطا در ورود به پنل سنایی. لطفا آدرس، پورت و فایروال را بررسی کنید.');
+
+      if (!loginSuccess) {
+        throw new Error(lastLoginError || 'خطا در ورود به پنل سنایی. لطفا آدرس و مشخصات را بررسی کنید.');
       }
     }
     
@@ -141,14 +103,31 @@ class XuiClient {
   public async testConnection() {
     try {
       const opts = await this.getAuthOptions();
-      // Try to fetch inbounds list as a test
-      const res = await this.client.get(`${opts.baseURL}/panel/api/inbounds/list`, {
-        headers: opts.headers
-      });
-      if (res.data?.success) {
-        return { success: true, message: 'اتصال به پنل با موفقیت برقرار شد.' };
+      const paths = ['/panel/api/inbounds/list', '/api/inbounds/list'];
+      
+      let lastError = null;
+      for (const path of paths) {
+        try {
+          console.log(`[X-UI Test] Probing: ${opts.baseURL}${path}`);
+          const res = await this.client.get(`${opts.baseURL}${path}`, {
+            headers: opts.headers,
+            validateStatus: () => true
+          });
+          
+          if (res.data?.success) {
+            return { 
+              success: true, 
+              message: `اتصال برقرار شد. مسیر شناسایی شده: ${path}`,
+              path: path
+            };
+          }
+          lastError = res.data?.msg || 'پاسخ ناموفق';
+        } catch (e: any) {
+          lastError = e.message;
+        }
       }
-      return { success: false, message: res.data?.msg || 'پنل پاسخ ناموفق داد. لطفا مشخصات را چک کنید.' };
+      
+      return { success: false, message: `خطا در برقراری ارتباط: ${lastError}` };
     } catch (e: any) {
       console.error('[X-UI Test Error]:', e.message);
       return { success: false, message: e.message };
@@ -160,25 +139,28 @@ class XuiClient {
       const state = db.getState();
       const panel = state.panel;
       if (!panel.url || (!panel.apiKey && (!panel.username || !panel.password))) {
-        console.warn('[X-UI] Panel not configured yet, returning empty inbounds list.');
         return [];
       }
 
       const opts = await this.getAuthOptions();
-      console.log(`[X-UI] Fetching inbounds from: ${opts.baseURL}/panel/api/inbounds/list`);
-      const res = await this.client.get(`${opts.baseURL}/panel/api/inbounds/list`, {
-        headers: opts.headers
-      });
-      console.log(`[X-UI] GetInbounds response status: ${res.status}, success: ${res.data?.success}`);
-      if (res.data?.success) {
-        return res.data.obj || [];
+      const paths = ['/panel/api/inbounds/list', '/api/inbounds/list'];
+      
+      for (const path of paths) {
+        try {
+          const res = await this.client.get(`${opts.baseURL}${path}`, {
+            headers: opts.headers,
+            validateStatus: () => true
+          });
+          if (res.data?.success) {
+            return res.data.obj || [];
+          }
+        } catch (e) {
+          // Continue to next path
+        }
       }
       return [];
     } catch (e: any) {
       console.error('[X-UI Error] Failed to get inbounds:', e?.message || e);
-      if (e.response) {
-        console.error('[X-UI Error Detail] Status:', e.response.status, 'Data:', JSON.stringify(e.response.data));
-      }
       this.cookie = ''; 
       return [];
     }
@@ -317,12 +299,16 @@ class XuiClient {
         `${opts.baseURL}/panel/api/inbounds/addClient`,
         `${opts.baseURL}/panel/api/inbounds/addclient`,
         `${opts.baseURL}/api/inbounds/addClient`,
+        `${opts.baseURL}/api/inbounds/addclient`,
         `${opts.baseURL}/panel/api/inbounds/client/add`,
+        `${opts.baseURL}/api/inbounds/client/add`,
+        `${opts.baseURL}/panel/api/inbound/addClient`, // Some forks use singular
+        `${opts.baseURL}/api/inbound/addClient`,
       ];
 
       let lastResponse: any = null;
       let lastError: any = null;
-      let success = false;
+      let isSuccess = false;
 
       for (const url of possibleUrls) {
         try {
@@ -340,7 +326,7 @@ class XuiClient {
           console.log(`[X-UI Response] URL: ${url} | Status: ${res?.status} | Data:`, JSON.stringify(res?.data));
 
           if (res?.data?.success) {
-            success = true;
+            isSuccess = true;
             break;
           }
 
@@ -354,7 +340,7 @@ class XuiClient {
             validateStatus: () => true
           });
           if (res?.data?.success) {
-            success = true;
+            isSuccess = true;
             lastResponse = res;
             break;
           }
@@ -364,7 +350,7 @@ class XuiClient {
         }
       }
 
-      if (!success) {
+      if (!isSuccess) {
         let errorMsg = lastResponse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.';
         if (lastResponse?.status === 404) errorMsg = 'آدرس API پنل پیدا نشد (404). لطفا آدرس پنل را چک کنید.';
         if (lastResponse?.status === 401 || lastResponse?.status === 403) errorMsg = 'خطای دسترسی (401/403). کلید API یا نام کاربری اشتباه است.';

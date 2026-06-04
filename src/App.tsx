@@ -487,69 +487,82 @@ function SettingsView() {
             <input type="text" value={state.panel.apiKey || ''} onChange={e => setState({...state, panel: {...state.panel, apiKey: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-left" dir="ltr" placeholder="vXg7hY..." />
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <label className="block text-sm font-medium text-slate-700">اینباندهای پیش‌فرض پنل (Global Inbounds)</label>
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg flex items-start gap-3">
+              <Settings2 className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              <div className="text-sm text-amber-800">
+                <p className="font-bold">راهنمای اتصال به پنل سنایی (MHSanaei):</p>
+                <p className="mt-1">۱. آدرس پنل را با پورت وارد کنید (مثلا <code className="bg-amber-100 px-1 rounded">http://1.2.3.4:2053</code>).</p>
+                <p>۲. اگر «Web Base Path» در تنظیمات پنل دارید، آن را به انتهای آدرس اضافه نکنید (ربات خودکار شناسایی می‌کند).</p>
+                <p>۳. پیشنهاد می‌شود از کلید API برای امنیت و سرعت بیشتر استفاده کنید.</p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button 
+                onClick={testConnection} 
+                className="flex-1 bg-slate-800 text-white px-4 py-2.5 rounded-md hover:bg-slate-900 transition flex items-center justify-center font-medium shadow-sm"
+              >
+                <Zap className="w-4 h-4 ml-2" /> تست سریع و شناسایی مسیر پنل
+              </button>
               <button 
                 onClick={loadInbounds} 
-                className="flex items-center gap-1 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded border transition-colors"
-                title="تازه سازی لیست از پنل"
+                className="flex-1 bg-indigo-600 text-white px-4 py-2.5 rounded-md hover:bg-indigo-700 transition flex items-center justify-center font-medium shadow-sm"
               >
-                <RefreshCw className="w-3 h-3" />
-                به‌روزرسانی لیست
+                <RefreshCw className="w-4 h-4 ml-2" /> واکشی لیست اینباندها
               </button>
             </div>
-            <p className="text-[11px] text-slate-400 mb-2">در صورتی که محصولی اینباند اختصاصی نداشته باشد، از این لیست به عنوان پیش‌فرض استفاده می‌شود.</p>
-            
-            {inbounds.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 p-3 bg-slate-50 rounded-lg border max-h-48 overflow-y-auto">
-                {inbounds.map((ib: any) => {
-                  const isChecked = (state.panel.inboundIds || []).includes(ib.id) || (state.panel.inboundId === ib.id);
-                  return (
-                    <label key={ib.id} className="flex items-center gap-2 text-sm text-slate-700 hover:text-indigo-600 cursor-pointer select-none">
-                      <input 
-                        type="checkbox" 
-                        checked={isChecked}
-                        onChange={e => {
-                          let updatedIds = [...(state.panel.inboundIds || [])];
-                          if (state.panel.inboundId && !updatedIds.includes(state.panel.inboundId)) {
-                            updatedIds.push(state.panel.inboundId);
-                          }
-                          if (e.target.checked) {
-                            if (!updatedIds.includes(ib.id)) updatedIds.push(ib.id);
-                          } else {
-                            updatedIds = updatedIds.filter(id => id !== ib.id);
-                          }
-                          setState({
-                            ...state,
-                            panel: {
-                              ...state.panel,
-                              inboundIds: updatedIds,
-                              inboundId: updatedIds[0] || undefined
+
+            <div className="space-y-2 border-t pt-4">
+              <label className="block text-sm font-medium text-slate-700">اینباندهای پیش‌فرض (Global Inbounds)</label>
+              <p className="text-[11px] text-slate-400">اینباندهایی که تیک می‌زنید، مقصد پیش‌فرض برای تمام فروش‌ها خواهند بود.</p>
+              
+              {inbounds.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 p-3 bg-slate-50 rounded-lg border max-h-60 overflow-y-auto">
+                  {inbounds.map((ib: any) => {
+                    const isChecked = (state.panel.inboundIds || []).includes(ib.id) || (state.panel.inboundId === ib.id);
+                    return (
+                      <label key={ib.id} className="flex items-center gap-2 p-2 hover:bg-white rounded border border-transparent hover:border-slate-200 transition text-sm text-slate-700 cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          checked={isChecked}
+                          onChange={e => {
+                            let updatedIds = [...(state.panel.inboundIds || [])];
+                            if (state.panel.inboundId && !updatedIds.includes(state.panel.inboundId)) {
+                              updatedIds.push(state.panel.inboundId);
                             }
-                          });
-                        }}
-                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="font-medium text-slate-800">{ib.remark}</span>
-                      <span className="text-xs text-slate-500 font-mono bg-slate-200 px-1.5 py-0.5 rounded">ID: {ib.id}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="flex items-end gap-4">
-                <div className="flex-1">
-                  <input 
-                    type="number" 
-                    value={state.panel.inboundId || ''} 
-                    onChange={e => setState({...state, panel: {...state.panel, inboundId: e.target.value}})} 
-                    className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-sm" 
-                    placeholder="شناسه عددی اینباند (مثلا 1)" 
-                  />
+                            if (e.target.checked) {
+                              if (!updatedIds.includes(ib.id)) updatedIds.push(ib.id);
+                            } else {
+                              updatedIds = updatedIds.filter(id => id !== ib.id);
+                            }
+                            setState({
+                              ...state,
+                              panel: {
+                                ...state.panel,
+                                inboundIds: updatedIds,
+                                inboundId: updatedIds[0] || undefined
+                              }
+                            });
+                          }}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                        />
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-800">{ib.remark}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">Port: {ib.port} | ID: {ib.id}</span>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="p-8 border-2 border-dashed border-slate-200 rounded-lg flex flex-col items-center justify-center text-slate-400 bg-slate-50">
+                  <Box className="w-10 h-10 mb-2 opacity-20" />
+                  <p className="text-sm">هنوز لیستی دریافت نشده است.</p>
+                  <button onClick={loadInbounds} className="mt-2 text-indigo-600 text-xs font-bold hover:underline">دریافت همین حالا</button>
+                </div>
+              )}
+            </div>
           </div>
 
           {inbounds.length > 0 && (
