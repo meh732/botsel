@@ -75,6 +75,16 @@ do_fresh_install() {
     return
   fi
 
+  echo -e "\n${CYAN}=============================================${NC}"
+  echo -e "${YELLOW}پیکربندی مدیر و پنل${NC}"
+  echo -e "${CYAN}=============================================${NC}"
+  read -p "پورت دلخواه جهت اجرای پنل وب [پیش‌فرض 3000]: " PANEL_PORT
+  PANEL_PORT=${PANEL_PORT:-3000}
+  
+  read -p "نام کاربری جهت ورود به پنل ربات (توصیه می‌شود وارد کنید): " PANEL_USER
+  read -sp "کلمه عبور جهت ورود به پنل ربات: " PANEL_PASS
+  echo ""
+
   do_uninstall
   do_install_dependencies
 
@@ -87,6 +97,12 @@ do_fresh_install() {
   fi
 
   cd "$DIR_NAME"
+
+  echo "PORT=$PANEL_PORT" > .env
+  if [ -n "$PANEL_USER" ] && [ -n "$PANEL_PASS" ]; then
+    echo "PANEL_USERNAME=$PANEL_USER" >> .env
+    echo "PANEL_PASSWORD=$PANEL_PASS" >> .env
+  fi
 
   echo -e "\n${CYAN}>> در حال نصب کردن پکیج‌های پیش نیاز پروژه...${NC}"
   npm install
@@ -101,7 +117,7 @@ do_fresh_install() {
 
   echo -e "\n${GREEN}=============================================${NC}"
   echo -e "${GREEN}🎉 نصب جدید با موفقیت به پایان رسید!${NC}"
-  echo -e "🌐 آدرس پنل مانیتورینگ شما: ${CYAN}http://YOUR_SERVER_IP:3000${NC}"
+  echo -e "🌐 آدرس پنل مانیتورینگ شما: ${CYAN}http://YOUR_SERVER_IP:${PANEL_PORT}${NC}"
   echo -e "🔧 جهت مشاهده لاگ‌ها دستور زیر را وارد کنید:"
   echo -e "   ${YELLOW}pm2 logs sanaei-bot${NC}"
   echo -e "${GREEN}=============================================${NC}"
@@ -122,6 +138,9 @@ do_update() {
     echo -e "${GREEN}📦 در حال تهیه فایل پشتیبان موقت از دیتابیس فعلی کاربران...${NC}"
     cp db.json ../db.json.bak
   fi
+  if [ -f ".env" ]; then
+    cp .env ../.env.bak
+  fi
 
   echo -e "\n${CYAN}>> در حال دریافت جدیدترین آپدیت‌ها از سرور گیت‌هاب...${NC}"
   git fetch --all
@@ -131,6 +150,9 @@ do_update() {
   if [ -f "../db.json.bak" ]; then
     mv ../db.json.bak db.json
     echo -e "${GREEN}✅ دیتابیس و اطلاعات کاربران با موفقیت بازیابی شد.${NC}"
+  fi
+  if [ -f "../.env.bak" ]; then
+    mv ../.env.bak .env
   fi
 
   echo -e "\n${CYAN}>> در حال نصب پکیج‌های جدید احتمالی...${NC}"

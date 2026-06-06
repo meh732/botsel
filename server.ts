@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import cors from "cors";
@@ -29,10 +30,25 @@ function parseInboundIds(vals: any): (string | number)[] {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(cors());
   app.use(express.json());
+
+  // Optional Basic Auth for the Panel
+  if (process.env.PANEL_USERNAME && process.env.PANEL_PASSWORD) {
+    app.use((req, res, next) => {
+      const b64auth = (req.headers.authorization || '').split(' ')[1] || '';
+      const [login, password] = Buffer.from(b64auth, 'base64').toString().split(':');
+
+      if (login === process.env.PANEL_USERNAME && password === process.env.PANEL_PASSWORD) {
+        return next();
+      }
+
+      res.set('WWW-Authenticate', 'Basic realm="Admin Panel"');
+      res.status(401).send('Authentication required.');
+    });
+  }
 
   // Init Telegram Bot
   initBot();
