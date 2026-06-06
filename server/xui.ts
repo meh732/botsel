@@ -290,6 +290,25 @@ class XuiClient {
     }
   }
 
+  public async delClientByEmail(email: string) {
+    try {
+      const opts = await this.getAuthOptions();
+      console.log(`[X-UI] Deleting client by email: ${email}`);
+      const workingPrefix = this.workingApiPrefix || '/panel/api';
+      
+      const res = await this.client.post(`${opts.baseURL}${workingPrefix}/clients/del/${email}`, {}, {
+        headers: opts.headers,
+        validateStatus: () => true
+      });
+      
+      console.log(`[X-UI] delClientByEmail response:`, JSON.stringify(res.data));
+      return res.data?.success || false;
+    } catch (e: any) {
+      console.error('[X-UI] Failed to delete client by email:', e.message);
+      return false;
+    }
+  }
+
   public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: string | number | (string | number)[], limitIp: number = 0, telegramId?: string) {
     const state = db.getState();
     let rawTargets: (string | number)[] = [];
@@ -370,7 +389,10 @@ class XuiClient {
                 const found = parsedSettings.clients.find((c: any) => c.email === email);
                 if (found) {
                   console.log(`[X-UI] Found existing client "${email}" in inbound ${inbound.id}. Deleting...`);
-                  await this.delClient(inbound.id, found.id || found.password);
+                  const delEmailSuccess = await this.delClientByEmail(email);
+                  if (!delEmailSuccess) {
+                    await this.delClient(inbound.id, found.id || found.password);
+                  }
                 }
               }
             }
@@ -426,79 +448,121 @@ class XuiClient {
       
       const workingPrefix = this.workingApiPrefix || '/panel/api';
       
-      const possibleUrls = [
-        // 1. Dynamic endpoints matching the verified successful prefix of this panel
-        `${opts.baseURL}${workingPrefix}/inbounds/addClient`,
-        `${opts.baseURL}${workingPrefix}/inbounds/addclient`,
-        `${opts.baseURL}${workingPrefix}/inbound/addClient`,
-        `${opts.baseURL}${workingPrefix}/inbound/addclient`,
-        `${opts.baseURL}${workingPrefix}/inbounds/client/add`,
-        `${opts.baseURL}${workingPrefix}/inbound/client/add`,
-        `${opts.baseURL}${workingPrefix}/client/add`,
-
-        // 2. Standard static fallback endpoints
-        `${opts.baseURL}/panel/api/inbounds/addClient`,
-        `${opts.baseURL}/panel/api/inbounds/addclient`,
-        `${opts.baseURL}/api/inbounds/addClient`,
-        `${opts.baseURL}/api/inbounds/addclient`,
-        `${opts.baseURL}/panel/api/inbounds/client/add`,
-        `${opts.baseURL}/api/inbounds/client/add`,
-        `${opts.baseURL}/panel/api/inbound/addClient`,
-        `${opts.baseURL}/api/inbound/addClient`,
-        `${opts.baseURL}/panel/inbounds/addclient`,
-        `${opts.baseURL}/panel/inbound/addclient`,
-        `${opts.baseURL}/api/inbound/addclient`,
-        `${opts.baseURL}/xui/api/inbounds/addClient`,
-        `${opts.baseURL}/xui/api/inbounds/addclient`,
-      ];
-
       let lastResponse: any = null;
       let non404Response: any = null;
       let lastError: any = null;
       let isSuccess = false;
 
-      for (const url of possibleUrls) {
-        try {
-          console.log(`[X-UI Attempt] Account creation probe: ${url} | Inbound ID: ${primaryInboundId}`);
-          
-          let res = await this.client.post(url, {
-            id: Number(primaryInboundId),
-            settings: JSON.stringify(settings)
-          }, {
-            headers: { ...opts.headers, 'Content-Type': 'application/json' },
-            validateStatus: () => true,
-            timeout: 10000
-          });
-          
-          lastResponse = res;
-          if (res?.status && res.status !== 404) {
-            non404Response = res;
-          }
-          if (res?.data?.success) {
-            isSuccess = true;
-            console.log(`[X-UI Success] Created client via: ${url}`);
-            break;
-          }
+      // First priority: Try modern client-based endpoint
+      try {
+        console.log(`[X-UI Attempt] Modern Client-based add probe: ${opts.baseURL}${workingPrefix}/clients/add`);
+        const clientPayload = {
+          client: {
+            id: clientId,
+            password: clientId,
+            uuid: clientId,
+            email: email,
+            enable: true,
+            expiryTime: expiryTime,
+            total: totalBytes,
+            limitIp: Number(limitIp) || 0,
+            flow: "",
+            tgId: telegramId ? (Number(telegramId) || 0) : 0, // must be integer / number (int64 in Go)
+            subId: subId
+          },
+          inboundIds: finalInboundIds
+        };
 
-          // Fallback: settings as object
-          res = await this.client.post(url, {
-            id: Number(primaryInboundId),
-            settings: settings
-          }, {
-            headers: { ...opts.headers, 'Content-Type': 'application/json' },
-            validateStatus: () => true
-          });
-          lastResponse = res;
-          if (res?.status && res.status !== 404) {
-            non404Response = res;
+        const res = await this.client.post(`${opts.baseURL}${workingPrefix}/clients/add`, clientPayload, {
+          headers: { ...opts.headers, 'Content-Type': 'application/json' },
+          validateStatus: () => true,
+          timeout: 10000
+        });
+
+        lastResponse = res;
+        if (res?.status && res.status !== 404) {
+          non404Response = res;
+        }
+        if (res?.data?.success) {
+          isSuccess = true;
+          console.log(`[X-UI Success] Created client via modern clients/add`);
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn('[X-UI Warn] Modern clients/add endpoint failed, falling back. error:', err.message);
+      }
+
+      // Second priority: Try legacy inbound-based endpoints
+      if (!isSuccess) {
+        const possibleUrls = [
+          // 1. Dynamic endpoints matching the verified successful prefix of this panel
+          `${opts.baseURL}${workingPrefix}/inbounds/addClient`,
+          `${opts.baseURL}${workingPrefix}/inbounds/addclient`,
+          `${opts.baseURL}${workingPrefix}/inbound/addClient`,
+          `${opts.baseURL}${workingPrefix}/inbound/addclient`,
+          `${opts.baseURL}${workingPrefix}/inbounds/client/add`,
+          `${opts.baseURL}${workingPrefix}/inbound/client/add`,
+          `${opts.baseURL}${workingPrefix}/client/add`,
+
+          // 2. Standard static fallback endpoints
+          `${opts.baseURL}/panel/api/inbounds/addClient`,
+          `${opts.baseURL}/panel/api/inbounds/addclient`,
+          `${opts.baseURL}/api/inbounds/addClient`,
+          `${opts.baseURL}/api/inbounds/addclient`,
+          `${opts.baseURL}/panel/api/inbounds/client/add`,
+          `${opts.baseURL}/api/inbounds/client/add`,
+          `${opts.baseURL}/panel/api/inbound/addClient`,
+          `${opts.baseURL}/api/inbound/addClient`,
+          `${opts.baseURL}/panel/inbounds/addclient`,
+          `${opts.baseURL}/panel/inbound/addclient`,
+          `${opts.baseURL}/api/inbound/addclient`,
+          `${opts.baseURL}/xui/api/inbounds/addClient`,
+          `${opts.baseURL}/xui/api/inbounds/addclient`,
+        ];
+
+        for (const url of possibleUrls) {
+          try {
+            console.log(`[X-UI Attempt] Legacy Account creation probe: ${url} | Inbound ID: ${primaryInboundId}`);
+            
+            let res = await this.client.post(url, {
+              id: Number(primaryInboundId),
+              settings: JSON.stringify(settings)
+            }, {
+              headers: { ...opts.headers, 'Content-Type': 'application/json' },
+              validateStatus: () => true,
+              timeout: 10000
+            });
+            
+            lastResponse = res;
+            if (res?.status && res.status !== 404) {
+              non404Response = res;
+            }
+            if (res?.data?.success) {
+              isSuccess = true;
+              console.log(`[X-UI Success] Created client via legacy: ${url}`);
+              break;
+            }
+
+            // Fallback: settings as object
+            res = await this.client.post(url, {
+              id: Number(primaryInboundId),
+              settings: settings
+            }, {
+              headers: { ...opts.headers, 'Content-Type': 'application/json' },
+              validateStatus: () => true
+            });
+            lastResponse = res;
+            if (res?.status && res.status !== 404) {
+              non404Response = res;
+            }
+            if (res?.data?.success) {
+              isSuccess = true;
+              console.log(`[X-UI Success] Created client via legacy (Object Mode): ${url}`);
+              break;
+            }
+          } catch (err: any) {
+            lastError = err;
           }
-          if (res?.data?.success) {
-            isSuccess = true;
-            console.log(`[X-UI Success] Created client via: ${url} (Object Mode)`);
-            break;
-          }
-        } catch (err: any) {
-          lastError = err;
         }
       }
 
@@ -508,10 +572,16 @@ class XuiClient {
         
         let errorMsg = responseToUse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.';
         if (responseToUse?.status === 404) {
-          errorMsg = `آدرس API ثبت کلاینت پیدا نشد (404) یا شناسه اینباند [ID: ${primaryInboundId}] در پنل شما وجود ندارد. لطفا شناسه اینباند یا Web Base Path را بررسی کنید.`;
+          // Extra diagnostic checking if listing inbounds had succeeded previously (which means base URL/ApiKey is valid but write action failed)
+          const apiConfiguredWithKey = !!state.panel.apiKey;
+          if (apiConfiguredWithKey) {
+            errorMsg = `❌ خطا در ساخت اکانت: آدرس API ثبت کلاینت یافت نشد (404) با وجود اینکه دریافت لیست اینباندها با کلید API موفق است. این خطا به احتمال قوی نشان می‌دهد "کلید API" تعریف شده شما فقط خواندنی (Read-Only) است و مجوزهای نوشتن (POST / WRITE) را ندارد. لطفا در پنل سنایی به مسیر تنظیمات پنل > کلیدهای API رفته و اطمینان حاصل کنید دسترسی‌های POST/WRITE (یا تمامی دسترسی‌ها) برای این کلید فعال شده باشد.`;
+          } else {
+            errorMsg = `❌ خطا در ساخت اکانت: آدرس API ثبت کلاینت پیدا نشد (404) یا شناسه اینباند [ID: ${primaryInboundId}] در پنل شما وجود ندارد. لطفا شناسه اینباند یا Web Base Path را بررسی کنید.`;
+          }
         }
         if (responseToUse?.status === 401 || responseToUse?.status === 403) {
-          errorMsg = 'خطای دسترسی و اعتبار سنجی (401/403). لطفا کلید API یا نام کاربری و رمز ورود را مجدد بررسی کنید.';
+          errorMsg = 'خطای دسترسی و اعتبار سنجی (401/403). لطفا کلید API یا نام کاربری و رمز ورود را مجدد بررسی کنید و از داشتن مجوزهای کامل مطمئن شوید.';
         }
         throw new Error(errorMsg);
       }
