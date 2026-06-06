@@ -328,6 +328,15 @@ class XuiClient {
       // Fetch inbounds once for tags and duplicate scanning
       const inboundsList: any[] = await this.getInbounds() || [];
 
+      // A key precheck: confirm if the selected primaryInboundId exists in their panel!
+      if (inboundsList && inboundsList.length > 0) {
+        const inboundExists = inboundsList.some(ib => Number(ib.id) === Number(primaryInboundId));
+        if (!inboundExists) {
+          const availableIds = inboundsList.map(ib => ib.id).join(', ');
+          throw new Error(`مشترک در اینباند با شناسه (${primaryInboundId}) یافت نشد. شناسه‌های فعال یافت شده در پنل شما: [${availableIds}]. لطفا محصولات یا تنظیمات ربات را ویرایش کرده و شناسه پورت صحیح را ذخیره نمایید.`);
+        }
+      }
+
       // 1. Scan and delete existing client with the same email in ALL discovered inbounds to prevent duplication
       if (inboundsList && inboundsList.length > 0) {
         try {
@@ -421,6 +430,7 @@ class XuiClient {
       ];
 
       let lastResponse: any = null;
+      let non404Response: any = null;
       let lastError: any = null;
       let isSuccess = false;
 
@@ -438,6 +448,9 @@ class XuiClient {
           });
           
           lastResponse = res;
+          if (res?.status && res.status !== 404) {
+            non404Response = res;
+          }
           if (res?.data?.success) {
             isSuccess = true;
             console.log(`[X-UI Success] Created client via: ${url}`);
@@ -452,9 +465,12 @@ class XuiClient {
             headers: { ...opts.headers, 'Content-Type': 'application/json' },
             validateStatus: () => true
           });
+          lastResponse = res;
+          if (res?.status && res.status !== 404) {
+            non404Response = res;
+          }
           if (res?.data?.success) {
             isSuccess = true;
-            lastResponse = res;
             console.log(`[X-UI Success] Created client via: ${url} (Object Mode)`);
             break;
           }
@@ -464,9 +480,16 @@ class XuiClient {
       }
 
       if (!isSuccess) {
-        let errorMsg = lastResponse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.';
-        if (lastResponse?.status === 404) errorMsg = 'آدرس API پنل پیدا نشد (404). لطفا آدرس پنل یا Web Base Path را چک کنید.';
-        if (lastResponse?.status === 401 || lastResponse?.status === 403) errorMsg = 'خطای دسترسی (401/403). کلید API یا نام کاربری اشتباه است.';
+        // Prefer any response that didn't yield a routing 404 error
+        const responseToUse = non404Response || lastResponse;
+        
+        let errorMsg = responseToUse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مشتری بازگرداند.';
+        if (responseToUse?.status === 404) {
+          errorMsg = `آدرس API ثبت کلاینت پیدا نشد (404) یا شناسه اینباند [ID: ${primaryInboundId}] در پنل شما وجود ندارد. لطفا شناسه اینباند یا Web Base Path را بررسی کنید.`;
+        }
+        if (responseToUse?.status === 401 || responseToUse?.status === 403) {
+          errorMsg = 'خطای دسترسی و اعتبار سنجی (401/403). لطفا کلید API یا نام کاربری و رمز ورود را مجدد بررسی کنید.';
+        }
         throw new Error(errorMsg);
       }
 

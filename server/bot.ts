@@ -1176,7 +1176,7 @@ export async function initBot() {
         try {
           const list = await xui.getInbounds();
           if (!list || list.length === 0) {
-            bot!.sendMessage(chatId, '❌ هیچ اینباندی یافت نشد یا اتصال با پنل برقرار نشد. لطفا مشخصات اتصال (آدرس، یوزرنیم و رمز پنل) را مجدد بررسی فرمایید.');
+            bot!.sendMessage(chatId, '❌ هیچ اینباندی یافت نشد یا اتصال با پنل برقرار نشد. لطفا مشخصات اتصال (آدرس کامل، توکن API یا اطلاعات کاربری ورود) را مجدداً بررسی فرمایید.');
           } else {
             let text = '⚡️ لیست اینباندهای یافت شده:\n\n';
             list.forEach((inb: any) => {
