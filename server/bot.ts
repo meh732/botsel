@@ -19,6 +19,7 @@ let bot: TelegramBot | null = null;
 let isPolling = false;
 const adminSession = new Map<number, string>();
 const userSession = new Map<number, { action: string; amount?: number }>();
+const pendingPayments = new Map<string, { chatId: number, amount: number, fileId?: string, timestamp: number }>();
 
 function getUserReplyKeyboard(user: any, state: any) {
   const keyboard = [];
@@ -121,7 +122,15 @@ export async function initBot() {
       }
     } else {
       if (user.balance < finalPrice) {
-        bot!.sendMessage(chatId, `❌ موجودی کافی نیست!\n\nقیمت سرویس: ${finalPrice.toLocaleString()} تومان\nموجودی شما: ${user.balance.toLocaleString()} تومان\n\nبرای افزایش موجودی، لطفا از بخش "شارژ حساب" استفاده کنید.`);
+        const diff = finalPrice - user.balance;
+        bot!.sendMessage(chatId, `❌ موجودی کافی نیست!\n\nقیمت سرویس: ${finalPrice.toLocaleString()} تومان\nموجودی شما: ${user.balance.toLocaleString()} تومان\nمبلغ کسری: ${diff.toLocaleString()} تومان\n\nجهت جبران کسری و ادامه خرید می‌توانید از دکمه زیر استفاده کنید:`, {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '💳 شارژ سریع مبلغ کسری', callback_data: `deposit_exact_${diff}` }],
+              [{ text: '💳 شارژ مبلغ دلخواه (سایر روش‌ها)', callback_data: 'user_deposit_flow' }]
+            ]
+          }
+        });
         return;
       }
     }
@@ -440,6 +449,9 @@ export async function initBot() {
         // Get largest photo size
         const photo = msg.photo[msg.photo.length - 1];
         const fileId = photo.file_id;
+        
+        const payId = Math.random().toString(36).substring(2, 10);
+        pendingPayments.set(payId, { chatId, amount, fileId, timestamp: Date.now() });
 
         bot!.sendMessage(chatId, '⏳ رسید پرداخت شما با موفقیت ارسال شد و در صف تایید مدیریت قرار گرفت. لطفاً صبور باشید...');
 
@@ -458,8 +470,8 @@ export async function initBot() {
             reply_markup: {
               inline_keyboard: [
                 [
-                  { text: '✅ تایید و شارژ', callback_data: `approve_pay_${chatId}_${amount}` },
-                  { text: '❌ رد فیش', callback_data: `reject_pay_${chatId}_${fileId}` }
+                  { text: '✅ تایید و شارژ', callback_data: `approve_pay_${payId}` },
+                  { text: '❌ رد فیش', callback_data: `reject_pay_${payId}` }
                 ]
               ]
             }
@@ -475,8 +487,8 @@ export async function initBot() {
               reply_markup: {
                 inline_keyboard: [
                   [
-                    { text: '✅ تایید و شارژ', callback_data: `approve_pay_${chatId}_${amount}` },
-                    { text: '❌ رد فیش', callback_data: `reject_pay_${chatId}_${fileId}` }
+                    { text: '✅ تایید و شارژ', callback_data: `approve_pay_${payId}` },
+                    { text: '❌ رد فیش', callback_data: `reject_pay_${payId}` }
                   ]
                 ]
               }
@@ -1277,21 +1289,29 @@ export async function initBot() {
 
     if (data && data.startsWith('approve_pay_')) {
       if (isAdmin) {
-        const parts = data.replace('approve_pay_', '').split('_');
-        const targetChatId = parseInt(parts[0]);
-        const amount = parseInt(parts[1]);
-        
-        const targetUser = db.getUser(targetChatId);
-        if (targetUser) {
-          targetUser.balance = (targetUser.balance || 0) + amount;
-          db.saveUser(targetUser);
+        const payId = data.replace('approve_pay_', '');
+        const payment = pendingPayments.get(payId);
+
+        if (payment) {
+          const targetChatId = payment.chatId;
+          const amount = payment.amount;
           
-          bot!.sendMessage(chatId, `✅ فیش واریزی کاربر \`${targetChatId}\` تایید شد. مبلغ *${amount.toLocaleString()}* تومان به حساب ایشان اضافه شد.`, { parse_mode: 'Markdown' });
-          
-          // Notify the user
-          bot!.sendMessage(targetChatId, `🎉 رسید پرداخت شما به مبلغ *${amount.toLocaleString()}* تومان توسط مدیریت تایید شد!\n\n💰 موجودی جدید شما: *${targetUser.balance.toLocaleString()}* تومان`, { parse_mode: 'Markdown' }).catch(() => {});
+          const targetUser = db.getUser(targetChatId);
+          if (targetUser) {
+            targetUser.balance = (targetUser.balance || 0) + amount;
+            db.saveUser(targetUser);
+            
+            pendingPayments.delete(payId); // Clean up
+            
+            bot!.sendMessage(chatId, `✅ فیش واریزی کاربر \`${targetChatId}\` تایید شد. مبلغ *${amount.toLocaleString()}* تومان به حساب ایشان اضافه شد.`, { parse_mode: 'Markdown' });
+            
+            // Notify the user
+            bot!.sendMessage(targetChatId, `🎉 رسید پرداخت شما به مبلغ *${amount.toLocaleString()}* تومان توسط مدیریت تایید شد!\n\n💰 موجودی جدید شما: *${targetUser.balance.toLocaleString()}* تومان`, { parse_mode: 'Markdown' }).catch(() => {});
+          } else {
+            bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
+          }
         } else {
-          bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
+           bot!.sendMessage(chatId, '❌ این فیش نامعتبر است یا قبلاً پردازش شده است.');
         }
       }
       bot!.answerCallbackQuery(query.id);
@@ -1300,13 +1320,20 @@ export async function initBot() {
 
     if (data && data.startsWith('reject_pay_')) {
       if (isAdmin) {
-        const payload = data.replace('reject_pay_', '');
-        const parts = payload.split('_');
-        const targetChatId = parseInt(parts[0]);
-        const fileId = parts[1] || '';
-        
-        adminSession.set(chatId, `reject_reason_${targetChatId}_${fileId}`);
-        bot!.sendMessage(chatId, `✍️ لطفاً دلیل رد فیش کاربر \`${targetChatId}\` را بنویسید و پیام دهید تا با تصویر فیش برای او ارسال شود:\n\n*(مثلا: اطلاعات فیش خوانا نیست)*`, { parse_mode: 'Markdown' });
+        const payId = data.replace('reject_pay_', '');
+        const payment = pendingPayments.get(payId);
+
+        if (payment) {
+          const targetChatId = payment.chatId;
+          const fileId = payment.fileId || '';
+          
+          pendingPayments.delete(payId); // Clean up
+
+          adminSession.set(chatId, `reject_reason_${targetChatId}_${fileId}`);
+          bot!.sendMessage(chatId, `✍️ لطفاً دلیل رد فیش کاربر \`${targetChatId}\` را بنویسید و پیام دهید تا با تصویر فیش برای او ارسال شود:\n\n*(مثلا: اطلاعات فیش خوانا نیست)*`, { parse_mode: 'Markdown' });
+        } else {
+           bot!.sendMessage(chatId, '❌ این فیش نامعتبر است یا قبلاً پردازش شده است.');
+        }
       }
       bot!.answerCallbackQuery(query.id);
       return;
@@ -1315,6 +1342,27 @@ export async function initBot() {
     if (data === 'user_deposit_flow') {
       userSession.set(chatId, { action: 'payment_awaiting_amount' });
       bot!.sendMessage(chatId, '💰 *شارژ حساب (کارت به کارت)*\n\nلطفاً مبلغ مد نظر جهت شارژ حساب خود را به *تومان* و به صورت عددی ارسال کنید:\n\nمثال: `50000` یا `120000`', { parse_mode: 'Markdown' });
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data && data.startsWith('deposit_exact_')) {
+      const amountStr = data.replace('deposit_exact_', '');
+      const amount = parseInt(amountStr);
+      if (!isNaN(amount) && amount > 0) {
+        userSession.set(chatId, { action: 'payment_awaiting_photo', amount });
+        const cardNumber = state.cardNumber || '۶۰۳۷۹۹۷۹۱۲۳۴۵۶۷۸';
+        const cardHolder = state.cardHolder || 'مدیریت حساب';
+
+        const paymentInstructions = `💳 *دستورالعمل جبران کسری موجودی*:\n\n` +
+          `لطفاً مبلغ *${amount.toLocaleString()}* تومان را به مشخصات بانکی زیر واریز نمایید:\n\n` +
+          `  💳 شماره کارت:\n  \`${cardNumber}\`\n\n` +
+          `  👤 به نام:\n  *${cardHolder}*\n\n` +
+          `⚠️ *توجه کُنید*:\n` +
+          `پس از انجام واریز، لطفا *عکس رسید پرداخت (فیش واریزی)* خود را به همین گفتگو بفرستید تا سریعاً توسط مدیریت تایید، حسابتان شارژ شده و خرید امکان پذیر شود.`;
+
+        bot!.sendMessage(chatId, paymentInstructions, { parse_mode: 'Markdown' });
+      }
       bot!.answerCallbackQuery(query.id);
       return;
     }
