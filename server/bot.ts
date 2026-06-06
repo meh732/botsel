@@ -5,6 +5,7 @@ import { encryptData, decryptData } from './crypto.js';
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
+import QRCode from 'qrcode';
 
 function escapeHtml(text: string): string {
   return (text || '')
@@ -20,6 +21,51 @@ let isPolling = false;
 const adminSession = new Map<number, string>();
 const userSession = new Map<number, { action: string; amount?: number }>();
 const pendingPayments = new Map<string, { chatId: number, amount: number, fileId?: string, timestamp: number }>();
+
+async function sendServiceInfo(chatId: number, purchase: any) {
+  if (!bot) return;
+  bot.sendMessage(chatId, '⏳ در حال دریافت اطلاعات کانفیگ‌ها و تولید بارکد...');
+  try {
+    const buffer = await QRCode.toBuffer(purchase.subUrl, { width: 400 });
+    let subContent = '';
+    try {
+      const resp = await fetch(purchase.subUrl);
+      if (resp.ok) {
+        const text = await resp.text();
+        try {
+          const decoded = Buffer.from(text, 'base64').toString('utf-8');
+          if (decoded.includes('vless://') || decoded.includes('vmess://') || decoded.includes('trojan://')) {
+            subContent = decoded.trim();
+          } else {
+            subContent = text.trim();
+          }
+        } catch {
+          subContent = text.trim();
+        }
+      }
+    } catch (e) { }
+
+    let configsText = '';
+    if (subContent) {
+      if (subContent.length > 800) {
+        configsText = `⚙️ *کانفیگ‌ها*:\n\`\`\`\n${subContent.slice(0, 800)}\n...\n\`\`\`\n\n`;
+      } else {
+        configsText = `⚙️ *کانفیگ‌ها*:\n\`\`\`\n${subContent}\n\`\`\`\n\n`;
+      }
+    }
+
+    const caption = `🔑 *اطلاعات سرویس (${purchase.name})*\n\n` +
+      `📑 *شماره سفارش*: \`${purchase.id}\`\n` +
+      `📦 *حجم*: ${purchase.volumeGb} GB | ⏳ *مدت*: ${purchase.durationDays} روز\n\n` +
+      `🔗 *لینک اشتراک شما (سابسکریپشن)*:\n\`${purchase.subUrl}\`\n\n` +
+      configsText +
+      `✅ جهت استفاده، بارکد را اسکن کنید و یا لینک را کپی کرده و در نرم‌افزار ایمپورت نمایید. (سپس از منوی نرم‌افزار Update Subscription را بزنید)`;
+
+    await bot.sendPhoto(chatId, buffer, { caption, parse_mode: 'Markdown' });
+  } catch (err) {
+    bot.sendMessage(chatId, `❌ خطا در پردازش اطلاعات سرویس. ${purchase.subUrl}`);
+  }
+}
 
 function getUserReplyKeyboard(user: any, state: any) {
   const keyboard = [];
@@ -186,9 +232,8 @@ export async function initBot() {
       if (discountPercent) {
          finalMsg += `🎫 تخفیف اعمال شده: %${discountPercent}\n💰 مبلغ نهایی کسر شده: ${finalPrice.toLocaleString()} تومان\n\n`;
       }
-      finalMsg += `🔗 لینک اشتراک:\n\`${client.subUrl}\``;
-
       bot!.sendMessage(chatId, finalMsg, { parse_mode: 'Markdown' });
+      await sendServiceInfo(chatId, newPurchase);
     } catch (err: any) {
       bot!.sendMessage(chatId, `❌ ساخت کانفیگ شکست خورد: ${err.message}`);
     }
@@ -1052,7 +1097,8 @@ export async function initBot() {
 
         db.saveUser(user);
 
-        bot!.sendMessage(chatId, `✅ اکانت تست با موفقیت ساخته شد!\n\nحجم: ${volGb}GB\nزمان: ${durDays} روز\n\n🔗 لینک اشتراک (اضافه کردن به v2rayNG):\n\`${client.subUrl}\``, { parse_mode: 'Markdown' });
+        bot!.sendMessage(chatId, `✅ اکانت تست با موفقیت ساخته شد!\n\nحجم: ${volGb}GB\nزمان: ${durDays} روز`, { parse_mode: 'Markdown' });
+        await sendServiceInfo(chatId, testPurchase);
       } catch (err: any) {
         bot!.sendMessage(chatId, `❌ خطا در ساخت اکانت: ${err.message}`);
       }
@@ -1158,13 +1204,11 @@ export async function initBot() {
         let msgReply = `📋 *لیست کل فروش‌ها و کانفیگ‌های ساخته شده توسط شما*:\n\n`;
         const inlineKeyboard: any[] = [];
         userPurchases.forEach((p: any, idx: number) => {
-          msgReply += `💎 ${idx + 1}- *${p.name}*\n` +
+          msgReply += `💎 ${idx + 1}- سفارش: \`${p.id}\`\n` +
+            `🔹 نام: *${p.name}*\n` +
             `📅 تاریخ: ${new Date(p.createdAt).toLocaleDateString('fa-IR')}\n` +
-            `📦 حجم: ${p.volumeGb} GB | مدت: ${p.durationDays} روز\n` +
-            `💰 مبلغ فروش: ${p.price.toLocaleString()} تومان\n` +
-            `🔗 لینک اشتراک:\n\`${p.subUrl}\`\n` +
             `----------------------------------\n`;
-          inlineKeyboard.push([{ text: `🔗 دریافت مجدد لینک ${p.name}`, callback_data: `resend_link_${p.id}` }]);
+          inlineKeyboard.push([{ text: `🔗 دریافت اطلاعات سرویس ${idx + 1}`, callback_data: `resend_link_${p.id}` }]);
         });
 
         bot!.sendMessage(chatId, msgReply, {
@@ -1222,14 +1266,11 @@ export async function initBot() {
         let msgReply = `📋 *لیست سرویس‌ها و خریدهای شما*:\n\n`;
         const inlineKeyboard: any[] = [];
         userPurchases.forEach((p: any, idx: number) => {
-          msgReply += `💎 ${idx + 1}- *${p.name}*\n` +
-            `📅 تاریخ خرید: ${new Date(p.createdAt).toLocaleDateString('fa-IR')}\n` +
-            `📦 حجم سرویس: ${p.volumeGb} گیگابایت\n` +
-            `⏳ مدت اعتبار: ${p.durationDays} روز\n` +
-            `💰 قیمت: ${p.price > 0 ? `${p.price.toLocaleString()} تومان` : 'رایگان'}\n` +
-            `🔗 لینک شما:\n\`${p.subUrl}\`\n` +
+          msgReply += `💎 ${idx + 1}- سفارش: \`${p.id}\`\n` +
+            `🔹 نام سرویس: *${p.name}*\n` +
+            `📅 تاریخ: ${new Date(p.createdAt).toLocaleDateString('fa-IR')}\n` +
             `----------------------------------\n`;
-          inlineKeyboard.push([{ text: `🔗 دریافت مجدداً لینک ${p.name}`, callback_data: `resend_link_${p.id}` }]);
+          inlineKeyboard.push([{ text: `🔗 دریافت اطلاعات سرویس ${idx + 1}`, callback_data: `resend_link_${p.id}` }]);
         });
 
         bot!.sendMessage(chatId, msgReply, {
@@ -1597,14 +1638,11 @@ export async function initBot() {
         let msg = `📋 *لیست سرویس‌ها و خریدهای شما*:\n\n`;
         const inlineKeyboard = [];
         userPurchases.forEach((p: any, idx: number) => {
-          msg += `💎 ${idx + 1}- *${p.name}*\n` +
-            `📅 تاریخ خرید: ${new Date(p.createdAt).toLocaleDateString('fa-IR')}\n` +
-            `📦 حجم سرویس: ${p.volumeGb} گیگابایت\n` +
-            `⏳ مدت اعتبار: ${p.durationDays} روز\n` +
-            `💰 قیمت: ${p.price > 0 ? `${p.price.toLocaleString()} تومان` : 'رایگان'}\n` +
-            `🔗 لینک شما:\n\`${p.subUrl}\`\n` +
+          msg += `💎 ${idx + 1}- سفارش: \`${p.id}\`\n` +
+            `🔹 نام سرویس: *${p.name}*\n` +
+            `📅 تاریخ: ${new Date(p.createdAt).toLocaleDateString('fa-IR')}\n` +
             `----------------------------------\n`;
-          inlineKeyboard.push([{ text: `🔗 دریافت مجدداً لینک ${p.name}`, callback_data: `resend_link_${p.id}` }]);
+          inlineKeyboard.push([{ text: `🔗 دریافت اطلاعات سرویس ${idx + 1}`, callback_data: `resend_link_${p.id}` }]);
         });
 
         bot!.sendMessage(chatId, msg, {
@@ -1619,15 +1657,16 @@ export async function initBot() {
     }
 
     if (data && data.startsWith('resend_link_')) {
+      bot!.answerCallbackQuery(query.id);
       const purchaseId = data.replace('resend_link_', '');
       const userPurchases = user.purchases || [];
       const purchase = userPurchases.find((p: any) => p.id === purchaseId);
+      
       if (purchase) {
-        bot!.sendMessage(chatId, `🔑 *لینک اشتراک سرویس (${purchase.name})*:\n\n\`${purchase.subUrl}\`\n\nجهت استفاده، لینک فوق را کپی کرده و در نرم افزار v2ray خود ایمپورت نمایید.`, { parse_mode: 'Markdown' });
+        await sendServiceInfo(chatId, purchase);
       } else {
         bot!.sendMessage(chatId, '❌ سرویس مورد نظر یافت نشد.');
       }
-      bot!.answerCallbackQuery(query.id);
       return;
     }
 
