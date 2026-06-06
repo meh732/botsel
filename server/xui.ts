@@ -426,7 +426,7 @@ class XuiClient {
         enable: true,
         expiryTime: expiryTime,
         total: totalBytes,
-        totalGB: volumeGb,
+        totalGB: totalBytes,
         limitIp: Number(limitIp) || 0,
         flow: "",
         tgId: telegramId || "",
@@ -466,6 +466,7 @@ class XuiClient {
             enable: true,
             expiryTime: expiryTime,
             total: totalBytes,
+            totalGB: totalBytes,
             limitIp: Number(limitIp) || 0,
             flow: "",
             tgId: telegramId ? (Number(telegramId) || 0) : 0, // must be integer / number (int64 in Go)
