@@ -188,7 +188,7 @@ export async function initBot() {
         ? product.inboundIds
         : (product.inboundId ? [product.inboundId] : undefined);
 
-      const sellerGroupName = user.isSeller ? (user.username ? `${user.username}` : `Seller_${chatId}`) : undefined;
+      const sellerGroupName = user.isSeller ? (user.nickname ? user.nickname : (user.username ? `${user.username}` : `Seller_${chatId}`)) : undefined;
       
       const volGb = product.volumeGb !== undefined ? Number(product.volumeGb) : 0;
       const durDays = product.durationDays !== undefined ? Number(product.durationDays) : 0;
@@ -919,18 +919,27 @@ export async function initBot() {
       if (sessionType === 'charge_user_bot') {
         const parts = text.trim().split(/\s+/);
         if (parts.length < 2) {
-          bot!.sendMessage(chatId, '❌ فرمت وارد شده اشتباه است. لطفا شناسه عددی و مبلغ را با فاصله بفرستید.');
+          bot!.sendMessage(chatId, '❌ فرمت وارد شده اشتباه است. لطفا شناسه کاربری/یوزرنیم و مبلغ را با فاصله بفرستید.');
           sendUsersMenu(chatId);
           return;
         }
-        const targetId = parseInt(parts[0]);
+        
+        const queryTarget = parts[0];
         const amount = parseInt(parts[1]);
-        if (isNaN(targetId) || isNaN(amount)) {
-          bot!.sendMessage(chatId, '❌ شناسه یا مبلغ وارد شده معتبر نمی‌باشد.');
+        
+        if (isNaN(amount)) {
+          bot!.sendMessage(chatId, '❌ مبلغ وارد شده معتبر نمی‌باشد.');
           sendUsersMenu(chatId);
           return;
         }
-        const targetUser = db.getUser(targetId);
+
+        let targetUser;
+        if (/^\d+$/.test(queryTarget)) {
+            targetUser = db.getUser(parseInt(queryTarget));
+        } else {
+            targetUser = db.getUserByUsername(queryTarget);
+        }
+
         if (!targetUser) {
           bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
           sendUsersMenu(chatId);
@@ -938,43 +947,53 @@ export async function initBot() {
         }
         targetUser.balance = (targetUser.balance || 0) + amount;
         db.saveUser(targetUser);
-        bot!.sendMessage(chatId, `✅ حساب کاربر 👤 ${targetUser.username ? '@' + targetUser.username : 'بدون یوزرنیم'} به مقدار *${amount.toLocaleString()}* تومان شارژ دسترسی یافت.`, { parse_mode: 'Markdown' });
-        bot!.sendMessage(targetId, `🎉 حساب کاربری شما توسط مدیریت به مبلغ *${amount.toLocaleString()}* تومان شارژ شد!`, { parse_mode: 'Markdown' }).catch(() => {});
+        bot!.sendMessage(chatId, `✅ حساب کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به مقدار *${amount.toLocaleString()}* تومان شارژ دسترسی یافت.`, { parse_mode: 'Markdown' });
+        bot!.sendMessage(targetUser.chatId, `🎉 حساب کاربری شما توسط مدیریت به مبلغ *${amount.toLocaleString()}* تومان شارژ شد!`, { parse_mode: 'Markdown' }).catch(() => {});
         sendUsersMenu(chatId);
         return;
       }
       if (sessionType === 'change_role_bot') {
-        const targetId = parseInt(text.trim());
-        if (isNaN(targetId)) {
-          bot!.sendMessage(chatId, '❌ قالب شناسه کاربری نامعتبر است.');
-          sendUsersMenu(chatId);
-          return;
+        const parts = text.trim().split(/\s+/);
+        const queryTarget = parts[0];
+        const newNickname = parts.slice(1).join(' ').trim();
+        
+        let targetUser;
+        if (/^\d+$/.test(queryTarget)) {
+            targetUser = db.getUser(parseInt(queryTarget));
+        } else {
+            targetUser = db.getUserByUsername(queryTarget);
         }
-        const targetUser = db.getUser(targetId);
+
         if (!targetUser) {
           bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
           sendUsersMenu(chatId);
           return;
         }
+
         targetUser.isSeller = !targetUser.isSeller;
         if (targetUser.isSeller) {
-          targetUser.debt = 0;
-          targetUser.totalSales = 0;
+          targetUser.debt = targetUser.debt || 0;
+          targetUser.totalSales = targetUser.totalSales || 0;
+          if (newNickname) {
+            targetUser.nickname = newNickname;
+          }
         }
         db.saveUser(targetUser);
-        bot!.sendMessage(chatId, `✅ وضعیت فروشندگی کاربر 👤 ${targetUser.username ? '@' + targetUser.username : 'بدون یوزرنیم'} به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر یافت.`, { parse_mode: 'Markdown' });
-        bot!.sendMessage(targetId, `✨ وضعیت همکار شما: نقش کاربری شما به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر کرده است.`, { parse_mode: 'Markdown' }).catch(() => {});
+        bot!.sendMessage(chatId, `✅ وضعیت فروشندگی کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر یافت.${targetUser.isSeller && targetUser.nickname ? `\n🏷 نیک‌نیم (نام گروه در سرور): ${targetUser.nickname}` : ''}`, { parse_mode: 'Markdown' });
+        bot!.sendMessage(targetUser.chatId, `✨ وضعیت همکار شما: نقش کاربری شما به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر کرده است.`, { parse_mode: 'Markdown' }).catch(() => {});
         sendUsersMenu(chatId);
         return;
       }
       if (sessionType === 'settle_user_bot') {
-        const targetId = parseInt(text.trim());
-        if (isNaN(targetId)) {
-          bot!.sendMessage(chatId, '❌ قالب عددی شناسه اشتباه است.');
-          sendUsersMenu(chatId);
-          return;
+        const queryTarget = text.trim();
+        let targetUser;
+
+        if (/^\d+$/.test(queryTarget)) {
+            targetUser = db.getUser(parseInt(queryTarget));
+        } else {
+            targetUser = db.getUserByUsername(queryTarget);
         }
-        const targetUser = db.getUser(targetId);
+
         if (!targetUser) {
           bot!.sendMessage(chatId, '❌ همکار فروشنده یافت نشد.');
           sendUsersMenu(chatId);
@@ -982,8 +1001,8 @@ export async function initBot() {
         }
         targetUser.debt = 0;
         db.saveUser(targetUser);
-        bot!.sendMessage(chatId, `✅ بدهی همکار 👤 ${targetUser.username ? '@' + targetUser.username : 'بدون یوزرنیم'} با موفقیت صفر شد (تسویه حساب کامل).`);
-        bot!.sendMessage(targetId, '💵 حساب بدهی شما توسط مدیریت تسویه شد و به صفر بازگشت.').catch(() => {});
+        bot!.sendMessage(chatId, `✅ بدهی همکار 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} با موفقیت صفر شد (تسویه حساب کامل).`);
+        bot!.sendMessage(targetUser.chatId, '💵 حساب بدهی شما توسط مدیریت تسویه شد و به صفر بازگشت.').catch(() => {});
         sendUsersMenu(chatId);
         return;
       }
@@ -1691,8 +1710,8 @@ export async function initBot() {
         if (data === 'set_t_days') promptText = '⏰ مدت زمان اعتبار اکانت تست رایگان را وارد کنید (به روز):';
         if (data === 'set_reward_toman') promptText = '💰 هدیه دریافت پاداش برای زیرمجموعه‌گیری به تومان را بفرستید:';
         if (data === 'add_prod') promptText = '➕ لطفا فرمت پکیج محصول جدید را به صورت دقیق بنویسید و بفرستید:\n\n`نام محصول,قیمت(به تومان),حجم(به گیگ),زمان(به روز),آیدی اینباند(عددی اختیاری)`\n\nمثال بدون اینباند:\n`طرح برنزی,50000,15,30`\n\nمثال با اینباند اختصاصی شماره ۲:\n`طرح طلایی,120000,50,30,2`';
-        if (data === 'charge_user_bot') promptText = '➕ لطفا شناسه کاربری (Chat ID) و میزان شارژ مطلوب به تومان را با یک فاصله بنویسید:\n\nمثال:\n`51239401 50000`';
-        if (data === 'change_role_bot') promptText = '🔄 لطفا شناسه کاربری (Chat ID) مدنظر را جهت جابجایی بین همکار/عادی بنویسید تا اعمال شود:\nمثال:\n`14023924`';
+        if (data === 'charge_user_bot') promptText = '➕ لطفا شناسه کاربری (Chat ID) یا یوزرنیم تلگرام و میزان شارژ مطلوب به تومان را با یک فاصله بنویسید:\n\nمثال:\n`51239401 50000`\nیا\n`@user 50000`';
+        if (data === 'change_role_bot') promptText = '🔄 لطفا شناسه کاربری (Chat ID) یا یوزرنیم تلگرام (بدون @ یا با @) کاربر را جهت جابجایی بین همکار/عادی بفرستید.\n\nهمچنین می‌توانید یک نیک‌نیم (تگ اختصاصی برای پنل) با فاصله بعد از آیدی بفرستید تا برایش لحاظ شود.\n\nمثال:\n`14023924`\nیا\n`@ali_reza MySellerGroup`';
         if (data === 'settle_user_bot') promptText = '💵 لطفا شناسه کاربری (Chat ID) همکار مدنظر را جهت تسویه کامل بدهی به مدیریت ارسال کنید:';
 
         bot!.sendMessage(chatId, `${promptText}\n\n⚠️ برای لغو فرآیند می‌توانید دستور دیگری بفرستید.`, { parse_mode: 'Markdown' });

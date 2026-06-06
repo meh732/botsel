@@ -35,6 +35,7 @@ export interface Purchase {
 export interface User {
   chatId: number;
   username?: string;
+  nickname?: string;
   balance: number;
   testUsed: boolean;
   registeredAt: string;
@@ -212,6 +213,11 @@ class Database {
 
   public getUser(chatId: number): User | undefined {
     return this.state.users.find(u => u.chatId === chatId);
+  }
+
+  public getUserByUsername(username: string): User | undefined {
+    const cleanUsername = username.replace('@', '').toLowerCase();
+    return this.state.users.find(u => u.username?.toLowerCase() === cleanUsername);
   }
 }
 
