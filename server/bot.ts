@@ -24,14 +24,14 @@ const pendingPayments = new Map<string, { chatId: number, amount: number, fileId
 
 async function sendServiceInfo(chatId: number, purchase: any) {
   if (!bot) return;
-  bot.sendMessage(chatId, '⏳ در حال دریافت اطلاعات کانفیگ‌ها و تولید بارکد...');
+  bot.sendMessage(chatId, '⏳ در حال دریافت اطلاعات کانفیگ‌ها و تولید بارکد...').catch(()=>{});
   try {
     const buffer = await QRCode.toBuffer(purchase.subUrl, { width: 400 });
     let subContent = '';
     try {
-      const resp = await fetch(purchase.subUrl);
-      if (resp.ok) {
-        const text = await resp.text();
+      const resp = await axios.get(purchase.subUrl, { timeout: 4000 });
+      const text = resp.data;
+      if (typeof text === 'string') {
         try {
           const decoded = Buffer.from(text, 'base64').toString('utf-8');
           if (decoded.includes('vless://') || decoded.includes('vmess://') || decoded.includes('trojan://')) {
@@ -43,12 +43,14 @@ async function sendServiceInfo(chatId: number, purchase: any) {
           subContent = text.trim();
         }
       }
-    } catch (e) { }
+    } catch (e) {
+       // Ignore fetch errors
+    }
 
     let configsText = '';
     if (subContent) {
-      if (subContent.length > 800) {
-        configsText = `⚙️ *کانفیگ‌ها*:\n\`\`\`\n${subContent.slice(0, 800)}\n...\n\`\`\`\n\n`;
+      if (subContent.length > 3000) {
+        configsText = `⚙️ *کانفیگ‌ها*:\n\`\`\`\n${subContent.slice(0, 3000)}\n...\n\`\`\`\n\n`;
       } else {
         configsText = `⚙️ *کانفیگ‌ها*:\n\`\`\`\n${subContent}\n\`\`\`\n\n`;
       }
@@ -58,10 +60,14 @@ async function sendServiceInfo(chatId: number, purchase: any) {
       `📑 *شماره سفارش*: \`${purchase.id}\`\n` +
       `📦 *حجم*: ${purchase.volumeGb} GB | ⏳ *مدت*: ${purchase.durationDays} روز\n\n` +
       `🔗 *لینک اشتراک شما (سابسکریپشن)*:\n\`${purchase.subUrl}\`\n\n` +
-      configsText +
-      `✅ جهت استفاده، بارکد را اسکن کنید و یا لینک را کپی کرده و در نرم‌افزار ایمپورت نمایید. (سپس از منوی نرم‌افزار Update Subscription را بزنید)`;
+      `✅ جهت استفاده، بارکد بالا را اسکن کنید و یا لینک فوق را کپی کرده و در نرم‌افزار ایمپورت نمایید. (سپس از منوی نرم‌افزار Update Subscription را بزنید)`;
 
     await bot.sendPhoto(chatId, buffer, { caption, parse_mode: 'Markdown' });
+
+    if (configsText) {
+      await bot.sendMessage(chatId, configsText, { parse_mode: 'Markdown' });
+    }
+
   } catch (err) {
     bot.sendMessage(chatId, `❌ خطا در پردازش اطلاعات سرویس. ${purchase.subUrl}`);
   }
@@ -965,7 +971,7 @@ export async function initBot() {
         }
 
         if (!targetUser) {
-          bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
+          bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد. دقت کنید اگر از یوزرنیم استفاده می‌کنید، باید کاربر قبلاً حداقل یک‌بار ربات را Start کرده باشد تا شناسایی شود.');
           sendUsersMenu(chatId);
           return;
         }
@@ -979,10 +985,32 @@ export async function initBot() {
           }
         }
         db.saveUser(targetUser);
-        bot!.sendMessage(chatId, `✅ وضعیت فروشندگی کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر یافت.${targetUser.isSeller && targetUser.nickname ? `\n🏷 نیک‌نیم (نام گروه در سرور): ${targetUser.nickname}` : ''}`, { parse_mode: 'Markdown' });
-        bot!.sendMessage(targetUser.chatId, `✨ وضعیت همکار شما: نقش کاربری شما به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر کرده است.`, { parse_mode: 'Markdown' }).catch(() => {});
-        sendUsersMenu(chatId);
+        
+        if (targetUser.isSeller && !newNickname) {
+           adminSession.set(chatId, `set_nickname_${targetUser.chatId}`);
+           bot!.sendMessage(chatId, `✅ کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به عنوان *همکار فروشنده* تعیین شد.\n\n📝 **حالا لطفاً فرمت نام گروه/نیک‌نیم این فروشنده را ارسال کنید:**\n\n_(این نام هنگام ساخت کانفیگ به ابتدای اسم‌ها اضافه می‌شود)_\nبرای رد کردن و استفاده از پیش‌فرض، کلمه \`رد\` را بفرستید.`, { parse_mode: 'Markdown' });
+        } else {
+           bot!.sendMessage(chatId, `✅ وضعیت فروشندگی کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر یافت.${targetUser.isSeller && targetUser.nickname ? `\n🏷 نیک‌نیم (نام گروه در سرور): ${targetUser.nickname}` : ''}`, { parse_mode: 'Markdown' });
+           sendUsersMenu(chatId);
+        }
+        bot!.sendMessage(targetUser.chatId, `✨ وضعیت کاربری شما تغییر کرد: نقش شما به *${targetUser.isSeller ? 'همکار فروشنده' : 'کاربر عادی'}* تغییر یافته است.`, { parse_mode: 'Markdown' }).catch(() => {});
         return;
+      }
+      
+      if (sessionType.startsWith('set_nickname_')) {
+         const targetId = parseInt(sessionType.replace('set_nickname_', ''));
+         const targetUser = db.getUser(targetId);
+         if (targetUser && targetUser.isSeller) {
+            if (text.trim().toLowerCase() !== 'skip' && text.trim() !== 'رد') {
+               targetUser.nickname = text.trim();
+               db.saveUser(targetUser);
+               bot!.sendMessage(chatId, `✅ نیک‌نیم اعمال شد: ${targetUser.nickname}`);
+            } else {
+               bot!.sendMessage(chatId, `✅ نیک‌نیم تنظیم نشد (از پیش‌فرض استفاده می‌شود).`);
+            }
+         }
+         sendUsersMenu(chatId);
+         return;
       }
       if (sessionType === 'settle_user_bot') {
         const queryTarget = text.trim();
@@ -1711,7 +1739,7 @@ export async function initBot() {
         if (data === 'set_reward_toman') promptText = '💰 هدیه دریافت پاداش برای زیرمجموعه‌گیری به تومان را بفرستید:';
         if (data === 'add_prod') promptText = '➕ لطفا فرمت پکیج محصول جدید را به صورت دقیق بنویسید و بفرستید:\n\n`نام محصول,قیمت(به تومان),حجم(به گیگ),زمان(به روز),آیدی اینباند(عددی اختیاری)`\n\nمثال بدون اینباند:\n`طرح برنزی,50000,15,30`\n\nمثال با اینباند اختصاصی شماره ۲:\n`طرح طلایی,120000,50,30,2`';
         if (data === 'charge_user_bot') promptText = '➕ لطفا شناسه کاربری (Chat ID) یا یوزرنیم تلگرام و میزان شارژ مطلوب به تومان را با یک فاصله بنویسید:\n\nمثال:\n`51239401 50000`\nیا\n`@user 50000`';
-        if (data === 'change_role_bot') promptText = '🔄 لطفا شناسه کاربری (Chat ID) یا یوزرنیم تلگرام (بدون @ یا با @) کاربر را جهت جابجایی بین همکار/عادی بفرستید.\n\nهمچنین می‌توانید یک نیک‌نیم (تگ اختصاصی برای پنل) با فاصله بعد از آیدی بفرستید تا برایش لحاظ شود.\n\nمثال:\n`14023924`\nیا\n`@ali_reza MySellerGroup`';
+        if (data === 'change_role_bot') promptText = '🔄 لطفا شناسه کاربری (Chat ID) یا یوزرنیم تلگرام کاربر را جهت جابجایی بین همکار/عادی بفرستید.\n\nبعد از ارسال، ربات از شما در یک مرحله مجزا نیک‌نیم شخص را دریافت می‌کند.\n\nمثال:\n`14023924`\nیا\n`@ali_reza`';
         if (data === 'settle_user_bot') promptText = '💵 لطفا شناسه کاربری (Chat ID) همکار مدنظر را جهت تسویه کامل بدهی به مدیریت ارسال کنید:';
 
         bot!.sendMessage(chatId, `${promptText}\n\n⚠️ برای لغو فرآیند می‌توانید دستور دیگری بفرستید.`, { parse_mode: 'Markdown' });
