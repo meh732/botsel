@@ -1140,6 +1140,18 @@ function UsersView() {
     }
   };
 
+  const toggleTest = async (chatId: number, currentStatus: boolean) => {
+    const res = await fetch(`/api/users/${chatId}/reset-test`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ testUsed: !currentStatus })
+    });
+    const data = await res.json();
+    if(data.success) {
+      setUsers(users.map(u => u.chatId === chatId ? {...u, testUsed: !currentStatus} : u));
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto" dir="rtl">
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -1159,6 +1171,13 @@ function UsersView() {
                 <td className="px-6 py-4">
                   <div className="font-medium text-slate-900" dir="ltr">{u.username ? `@${u.username}` : 'No Username'}</div>
                   <div className="text-sm text-slate-500 font-mono" dir="ltr">{u.chatId}</div>
+                  <div className="mt-1">
+                    {u.testUsed ? (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-700 border border-amber-200 font-semibold">🚫 تست استفاده شده</span>
+                    ) : (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-teal-50 text-teal-700 border border-teal-200 font-semibold">✅ تست مجاز</span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4">
                   {u.isSeller ? (
@@ -1181,6 +1200,9 @@ function UsersView() {
                 </td>
                 <td className="px-6 py-4 text-sm text-slate-500">{new Date(u.registeredAt).toLocaleDateString('fa-IR')}</td>
                 <td className="px-6 py-4 text-left flex items-center justify-end gap-2">
+                  <button onClick={() => toggleTest(u.chatId, !!u.testUsed)} className={`px-2.5 py-1.5 rounded-md font-medium text-xs transition ${u.testUsed ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200' : 'bg-slate-50 text-slate-400 hover:bg-slate-150 border border-slate-200'}`}>
+                    {u.testUsed ? '🔄 فعال‌سازی تست مجدد' : 'علامت تست‌شده'}
+                  </button>
                   <button onClick={() => toggleSeller(u.chatId, !!u.isSeller)} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-medium text-xs transition">
                     تغییر نقش
                   </button>

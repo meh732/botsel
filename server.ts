@@ -401,6 +401,15 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  api.post("/users/:chatId/reset-test", (req, res) => {
+    const { testUsed } = req.body;
+    const user = db.getUser(parseInt(req.params.chatId));
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    user.testUsed = !!testUsed;
+    db.saveUser(user);
+    res.json({ success: true, testUsed: user.testUsed });
+  });
+
   api.post("/users/:chatId/seller-limits", (req, res) => {
     const { debtLimit, debtVolume, debt } = req.body;
     const user = db.getUser(parseInt(req.params.chatId));

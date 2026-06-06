@@ -6,6 +6,15 @@ import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
 
+function escapeHtml(text: string): string {
+  return (text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 let bot: TelegramBot | null = null;
 let isPolling = false;
 const adminSession = new Map<number, string>();
@@ -125,11 +134,20 @@ export async function initBot() {
         : (product.inboundId ? [product.inboundId] : undefined);
 
       const sellerGroupName = user.isSeller ? (user.username ? `${user.username}` : `Seller_${chatId}`) : undefined;
-      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, selectedInboundIds, product.limitIp || 0, String(chatId), sellerGroupName);
+      
+      const volGb = product.volumeGb !== undefined ? Number(product.volumeGb) : 0;
+      const durDays = product.durationDays !== undefined ? Number(product.durationDays) : 0;
+
+      const cleanUsername = user.username ? user.username.trim().replace(/[^a-zA-Z0-9_]/g, '') : '';
+      const emailPrefix = cleanUsername || String(chatId);
+      const uniqueSuffix = Date.now().toString().slice(-6);
+      const clientEmail = `${emailPrefix}_${uniqueSuffix}`;
+
+      const client = await xui.addClient(clientEmail, volGb, durDays, selectedInboundIds, product.limitIp || 0, String(chatId), sellerGroupName);
       
       if (user.isSeller) {
         user.debt = (user.debt || 0) + finalPrice;
-        user.debtVolume = (user.debtVolume || 0) + product.volumeGb;
+        user.debtVolume = (user.debtVolume || 0) + Number(product.volumeGb || 0);
         user.totalSales = (user.totalSales || 0) + finalPrice;
       } else {
         user.balance -= finalPrice;
@@ -426,24 +444,43 @@ export async function initBot() {
         bot!.sendMessage(chatId, '⏳ رسید پرداخت شما با موفقیت ارسال شد و در صف تایید مدیریت قرار گرفت. لطفاً صبور باشید...');
 
         // Notify admins
+        const escapedName = escapeHtml(msg.from?.first_name || 'ناشناس');
+        const escapedUsername = msg.from?.username ? `@${escapeHtml(msg.from.username)}` : 'ندارد';
+
         state.adminIds.forEach(adminId => {
-          bot!.sendPhoto(adminId, fileId, {
-            caption: `🔔 *درخواست جدید شارژ حساب (کارت به کارت)*\n\n` +
-              `👤 کاربر: ${msg.from?.first_name || 'ناشناس'} ${msg.from?.username ? '@' + msg.from.username : ''}\n` +
-              `🆔 شناسه کاربری (Chat ID): \`${chatId}\`\n` +
-              `💰 مبلغ ارسالی فیش: *${amount.toLocaleString()}* تومان\n\n` +
+          bot!.sendPhoto(Number(adminId), fileId, {
+            caption: `🔔 <b>درخواست جدید شارژ حساب (کارت به کارت)</b>\n\n` +
+              `👤 کاربر: ${escapedName} (${escapedUsername})\n` +
+              `🆔 شناسه کاربری (Chat ID): <code>${chatId}</code>\n` +
+              `💰 مبلغ ارسالی فیش: <b>${amount.toLocaleString()}</b> تومان\n\n` +
               `آیا این رسید را تایید می‌کنید؟`,
-            parse_mode: 'Markdown',
+            parse_mode: 'HTML',
             reply_markup: {
               inline_keyboard: [
                 [
                   { text: '✅ تایید و شارژ', callback_data: `approve_pay_${chatId}_${amount}` },
-                  { text: '❌ رد فیش', callback_data: `reject_pay_${chatId}` }
+                  { text: '❌ رد فیش', callback_data: `reject_pay_${chatId}_${fileId}` }
                 ]
               ]
             }
           }).catch(err => {
             console.error(`Failed to broadcast payment to admin ${adminId}:`, err.message);
+            // Fallback delivery if sendPhoto fails
+            bot!.sendMessage(Number(adminId), `🔔 <b>درخواست جدید شارژ حساب (کارت به کارت - فاقد تصویر)</b>\n\n` +
+              `👤 کاربر: ${escapedName} (${escapedUsername})\n` +
+              `🆔 شناسه کاربری (Chat ID): <code>${chatId}</code>\n` +
+              `💰 مبلغ ارسالی فیش: <b>${amount.toLocaleString()}</b> تومان\n\n` +
+              `⚠️ تصویر فیش به علت محدودیت‌های تلگرام یا حجم بالا ارسال نشد اما درخواست ثبت گردیده است.`, {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '✅ تایید و شارژ', callback_data: `approve_pay_${chatId}_${amount}` },
+                    { text: '❌ رد فیش', callback_data: `reject_pay_${chatId}_${fileId}` }
+                  ]
+                ]
+              }
+            }).catch(e => console.error(`Fallback failed:`, e.message));
           });
         });
         return;
@@ -527,6 +564,35 @@ export async function initBot() {
     if (isAdmin && sessionType && text && !text.startsWith('/')) {
       adminSession.delete(chatId);
       
+      if (sessionType.startsWith('reject_reason_')) {
+        const payload = sessionType.replace('reject_reason_', '');
+        const parts = payload.split('_');
+        const targetChatId = parseInt(parts[0]);
+        const fileId = parts[1] || '';
+
+        const reasonText = text.trim();
+
+        // 1. Send failure notice with the reason
+        const userMsg = `❌ *رسید پرداخت کارت به کارت شما رد شد.*\n\n⚠️ *دلیل رد:* ${reasonText}\n\nلطفاً اطلاعات تراکنش را بررسی نموده یا با پشتیبانی در ارتباط باشید.`;
+        
+        if (fileId) {
+          // Send photo with message as caption
+          bot!.sendPhoto(targetChatId, fileId, {
+            caption: userMsg,
+            parse_mode: 'Markdown'
+          }).catch(err => {
+            console.error(`Failed to send reject photo to customer ${targetChatId}:`, err.message);
+            // Fallback to text message if photo send failed
+            bot!.sendMessage(targetChatId, userMsg, { parse_mode: 'Markdown' }).catch(() => {});
+          });
+        } else {
+          bot!.sendMessage(targetChatId, userMsg, { parse_mode: 'Markdown' }).catch(() => {});
+        }
+
+        bot!.sendMessage(chatId, `✅ فیش کاربر \`${targetChatId}\` رد شد و دلیل برای ایشان به همراه عکس فیش ارسال گردید:\n\n*${reasonText}*`, { parse_mode: 'Markdown' });
+        return;
+      }
+
       if (sessionType === 'set_card_num') {
         state.cardNumber = text.trim();
         db.updateState({ cardNumber: state.cardNumber });
@@ -947,12 +1013,34 @@ export async function initBot() {
           ? state.freeTestInboundIds
           : (state.freeTestInboundId ? [state.freeTestInboundId] : undefined);
 
-        const client = await xui.addClient(`test_${chatId}`, state.freeTestVolumeGb, state.freeTestDurationDays, testInboundIds, 1, String(chatId));
+        const volGb = state.freeTestVolumeGb !== undefined ? Number(state.freeTestVolumeGb) : 0;
+        const durDays = state.freeTestDurationDays !== undefined ? Number(state.freeTestDurationDays) : 0;
+
+        const cleanUsername = user.username ? user.username.trim().replace(/[^a-zA-Z0-9_]/g, '') : '';
+        const emailPrefix = cleanUsername || String(chatId);
+        const uniqueSuffix = Date.now().toString().slice(-4);
+        const clientEmail = `${emailPrefix}_test_${uniqueSuffix}`;
+
+        const client = await xui.addClient(clientEmail, volGb, durDays, testInboundIds, 1, String(chatId));
         
         user.testUsed = true;
+
+        // Save purchase record for free test
+        const testPurchase = {
+          id: `test_${Date.now()}`,
+          name: `تست رایگان (${volGb}GB - ${durDays} روز)`,
+          price: 0,
+          subUrl: client.subUrl,
+          volumeGb: volGb,
+          durationDays: durDays,
+          createdAt: new Date().toISOString()
+        };
+        user.purchases = user.purchases || [];
+        user.purchases.push(testPurchase);
+
         db.saveUser(user);
 
-        bot!.sendMessage(chatId, `✅ اکانت تست با موفقیت ساخته شد!\n\nحجم: ${state.freeTestVolumeGb}GB\nزمان: ${state.freeTestDurationDays} روز\n\n🔗 لینک اشتراک (اضافه کردن به v2rayNG):\n\`${client.subUrl}\``, { parse_mode: 'Markdown' });
+        bot!.sendMessage(chatId, `✅ اکانت تست با موفقیت ساخته شد!\n\nحجم: ${volGb}GB\nزمان: ${durDays} روز\n\n🔗 لینک اشتراک (اضافه کردن به v2rayNG):\n\`${client.subUrl}\``, { parse_mode: 'Markdown' });
       } catch (err: any) {
         bot!.sendMessage(chatId, `❌ خطا در ساخت اکانت: ${err.message}`);
       }
@@ -1212,10 +1300,13 @@ export async function initBot() {
 
     if (data && data.startsWith('reject_pay_')) {
       if (isAdmin) {
-        const targetChatId = parseInt(data.replace('reject_pay_', ''));
-        bot!.sendMessage(chatId, `❌ فیش واریزی کاربر \`${targetChatId}\` رد شد.`, { parse_mode: 'Markdown' });
+        const payload = data.replace('reject_pay_', '');
+        const parts = payload.split('_');
+        const targetChatId = parseInt(parts[0]);
+        const fileId = parts[1] || '';
         
-        bot!.sendMessage(targetChatId, '❌ رسید پرداخت کارت به کارت شما توسط مدیریت بررسی و رد شد. در صورت بروز هرگونه اشتباه لطفا با پشتیبانی در ارتباط باشید.', { parse_mode: 'Markdown' }).catch(() => {});
+        adminSession.set(chatId, `reject_reason_${targetChatId}_${fileId}`);
+        bot!.sendMessage(chatId, `✍️ لطفاً دلیل رد فیش کاربر \`${targetChatId}\` را بنویسید و پیام دهید تا با تصویر فیش برای او ارسال شود:\n\n*(مثلا: اطلاعات فیش خوانا نیست)*`, { parse_mode: 'Markdown' });
       }
       bot!.answerCallbackQuery(query.id);
       return;
