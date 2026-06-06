@@ -31,6 +31,17 @@ function getUserReplyKeyboard(user: any, state: any) {
   };
 }
 
+function getSellerReplyKeyboard() {
+  return {
+    keyboard: [
+      [{ text: '🛒 خرید سرویس همکار' }, { text: '📉 وضعیت بدهی و اعتبار همکار' }],
+      [{ text: '📋 لیست فروش‌های من' }],
+      [{ text: '🔙 بازگشت به منوی اصلی' }]
+    ],
+    resize_keyboard: true
+  };
+}
+
 export async function initBot() {
   const state = db.getState();
   if (!state.botToken) {
@@ -93,7 +104,12 @@ export async function initBot() {
     }
 
     if (user.isSeller) {
-      // Seller compiles debt, no immediate balance check or deduct
+      const currentDebt = user.debt || 0;
+      const limit = user.debtLimit !== undefined ? user.debtLimit : 1000000;
+      if (currentDebt + finalPrice > limit) {
+        bot!.sendMessage(chatId, `❌ خطا در خرید: سقف اعتبار شما کافی نیست!\n\nبدهی فعلی شما: ${currentDebt.toLocaleString()} تومان\nهزینه این خرید: ${finalPrice.toLocaleString()} تومان\nسقف اعتبار مجاز: ${limit.toLocaleString()} تومان\n\nجهت آزاد کردن سقف خرید لطفا با ادمین تسویه کنید.`);
+        return;
+      }
     } else {
       if (user.balance < finalPrice) {
         bot!.sendMessage(chatId, `❌ موجودی کافی نیست!\n\nقیمت سرویس: ${finalPrice.toLocaleString()} تومان\nموجودی شما: ${user.balance.toLocaleString()} تومان\n\nبرای افزایش موجودی، لطفا از بخش "شارژ حساب" استفاده کنید.`);
@@ -108,10 +124,12 @@ export async function initBot() {
         ? product.inboundIds
         : (product.inboundId ? [product.inboundId] : undefined);
 
-      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, selectedInboundIds, product.limitIp || 0, String(chatId));
+      const sellerGroupName = user.isSeller ? (user.username ? `${user.username}` : `Seller_${chatId}`) : undefined;
+      const client = await xui.addClient(`buy_${chatId}_${Date.now()}`, product.volumeGb, product.durationDays, selectedInboundIds, product.limitIp || 0, String(chatId), sellerGroupName);
       
       if (user.isSeller) {
         user.debt = (user.debt || 0) + finalPrice;
+        user.debtVolume = (user.debtVolume || 0) + product.volumeGb;
         user.totalSales = (user.totalSales || 0) + finalPrice;
       } else {
         user.balance -= finalPrice;
@@ -961,10 +979,109 @@ export async function initBot() {
       return;
     }
 
-    if (cleanText === 'پنل همکار (فروشنده)' || cleanText === 'پنل همکار' || text.includes('پنل همکار') || text.includes('همکار') || text.includes('فروشنده')) {
+    if (cleanText === 'پنل همکار (فروشنده)' || cleanText === 'پنل همکار') {
       const user = db.getUser(chatId);
       if (!user || !user.isSeller) return;
-      bot!.sendMessage(chatId, `📊 آمار فروش شما:\n\n💰 مجموع فروش: ${(user.totalSales || 0).toLocaleString()} تومان\n📉 بدهی فعلی به ادمین: ${(user.debt || 0).toLocaleString()} تومان\n\nبرای ثبت فروش جدید از منوی اصلی "خرید سرویس" را انتخاب کنید.`);
+      
+      const textResponse = `📊 *به پنل اختصاصی همکار خوش آمدید*\n\n` +
+        `جهت ثبت فروش و مشاهده وضعیت اعتبار و بدهی‌های خود، از منوی زیر استفاده کنید:\n\n` +
+        `💰 مجموع کل فروش شما: *${(user.totalSales || 0).toLocaleString()}* تومان\n` +
+        `📉 میزان بدهی فعلی: *${(user.debt || 0).toLocaleString()}* تومان`;
+        
+      bot!.sendMessage(chatId, textResponse, {
+        parse_mode: 'Markdown',
+        reply_markup: getSellerReplyKeyboard()
+      });
+      return;
+    }
+
+    if (cleanText === '📉 بدهی و سقف اعتبار همکار' || cleanText === '📉 وضعیت بدهی و اعتبار همکار' || text.includes('وضعیت بدهی و اعتبار') || text.includes('بدهی و سقف')) {
+      const user = db.getUser(chatId);
+      if (!user || !user.isSeller) return;
+      
+      const limit = user.debtLimit !== undefined ? user.debtLimit : 1000000;
+      const debtVal = user.debt || 0;
+      const remains = Math.max(0, limit - debtVal);
+      const volumeDebt = user.debtVolume || 0;
+      
+      const msgText = `📉 *وضعیت بدهی و اعتبار همکار*:\n\n` +
+        `👤 همکار: ${user.username ? `@${user.username}` : `شناسه ${chatId}`}\n` +
+        `💰 مجموع کل فروش شما: *${(user.totalSales || 0).toLocaleString()}* تومان\n` +
+        `📉 بدهی مالی فعلی شما: *${debtVal.toLocaleString()}* تومان\n` +
+        `📦 حجم بدهی فعال شما: *${volumeDebt.toLocaleString()}* GB\n` +
+        `💳 سقف بدهی مجاز شما: *${limit.toLocaleString()}* تومان\n` +
+        `✅ اعتبار خرید باقیمانده: *${remains.toLocaleString()}* تومان\n\n` +
+        `🚨 خرید شما در صورتی که بدهی از سقف مجاز بیشتر شود به صورت هوشمند مسدود خواهد شد.`;
+        
+      bot!.sendMessage(chatId, msgText, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (cleanText === '🛒 خرید سرویس همکار' || text.includes('خرید سرویس همکار')) {
+      const user = db.getUser(chatId);
+      if (!user || !user.isSeller) return;
+      
+      const stateObj = db.getState();
+      if (stateObj.products.length === 0) {
+        bot!.sendMessage(chatId, '❌ هیچ محصولی موجود نیست.');
+        return;
+      }
+
+      // Check if they exceed debt limit
+      const currentDebt = user.debt || 0;
+      const limit = user.debtLimit !== undefined ? user.debtLimit : 1000000;
+      if (currentDebt >= limit) {
+        bot!.sendMessage(chatId, `❌ خطا: سقف بدهی مجاز شما به پایان رسیده است و خرید مسدود است!\n\nبدهی شما: ${currentDebt.toLocaleString()} تومان\nسقف مجاز: ${limit.toLocaleString()} تومان\n\nلطفا جهت تسویه با مدیریت در ارتباط باشید.`);
+        return;
+      }
+
+      const inlineKeyboard = stateObj.products.map(p => ([
+        { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
+      ]));
+
+      bot!.sendMessage(chatId, '🛒 *خرید سرویس ویژه همکاران*:\nلطفا یکی از پکیج‌های زیر را جهت ساخت اتوماتیک انتخاب کنید:', {
+         parse_mode: 'Markdown',
+         reply_markup: {
+           inline_keyboard: inlineKeyboard
+         }
+      });
+      return;
+    }
+
+    if (cleanText === '📋 لیست فروش‌های من' || text.includes('لیست فروش')) {
+      const userObj = db.getUser(chatId);
+      if (!userObj || !userObj.isSeller) return;
+      const userPurchases = userObj.purchases || [];
+      if (userPurchases.length === 0) {
+        bot!.sendMessage(chatId, '❌ شما هنوز هیچ فروش/خریدی ثبت نکرده‌اید.');
+      } else {
+        let msgReply = `📋 *لیست کل فروش‌ها و کانفیگ‌های ساخته شده توسط شما*:\n\n`;
+        const inlineKeyboard: any[] = [];
+        userPurchases.forEach((p: any, idx: number) => {
+          msgReply += `💎 ${idx + 1}- *${p.name}*\n` +
+            `📅 تاریخ: ${new Date(p.createdAt).toLocaleDateString('fa-IR')}\n` +
+            `📦 حجم: ${p.volumeGb} GB | مدت: ${p.durationDays} روز\n` +
+            `💰 مبلغ فروش: ${p.price.toLocaleString()} تومان\n` +
+            `🔗 لینک اشتراک:\n\`${p.subUrl}\`\n` +
+            `----------------------------------\n`;
+          inlineKeyboard.push([{ text: `🔗 دریافت مجدد لینک ${p.name}`, callback_data: `resend_link_${p.id}` }]);
+        });
+
+        bot!.sendMessage(chatId, msgReply, {
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: inlineKeyboard
+          }
+        });
+      }
+      return;
+    }
+
+    if (cleanText === '🔙 بازگشت به منوی اصلی' || text.includes('بازگشت به منوی اصلی') || text === 'بازگشت') {
+      const stateObj = db.getState();
+      bot!.sendMessage(chatId, '🔙 به منوی اصلی بازگشتید.', {
+        reply_markup: getUserReplyKeyboard(db.getUser(chatId), stateObj)
+      });
       return;
     }
 

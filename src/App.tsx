@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload, Zap, CheckCircle } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'settings' | 'products' | 'users'>('settings');
+  const [activeTab, setActiveTab] = useState<'settings' | 'products' | 'users' | 'sellers'>('settings');
 
   return (
     <div className="w-full h-full min-h-screen bg-slate-50 flex flex-row" dir="rtl" style={{ fontFamily: "'Tahoma', 'Arial', sans-serif" }}>
@@ -17,7 +17,8 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-2">
           <TabBtn active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings2 className="w-5 h-5"/>}>تنظیمات ربات</TabBtn>
           <TabBtn active={activeTab === 'products'} onClick={() => setActiveTab('products')} icon={<Box className="w-5 h-5"/>}>لیست محصولات</TabBtn>
-          <TabBtn active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<UsersIcon className="w-5 h-5"/>}>مشتریان</TabBtn>
+          <TabBtn active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<UsersIcon className="w-5 h-5"/>}>مشتریان عادی</TabBtn>
+          <TabBtn active={activeTab === 'sellers'} onClick={() => setActiveTab('sellers')} icon={<UsersIcon className="w-5 h-5 text-indigo-400"/>}>همکاران فروشنده (نمایندگان)</TabBtn>
         </nav>
         <div className="p-4 mt-auto border-t border-slate-800">
           <div className="bg-slate-800 rounded-lg p-3">
@@ -50,6 +51,7 @@ export default function App() {
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'products' && <ProductsView />}
           {activeTab === 'users' && <UsersView />}
+          {activeTab === 'sellers' && <SellersView />}
         </main>
       </div>
     </div>
@@ -79,8 +81,85 @@ function SettingsView() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  const [localBackups, setLocalBackups] = useState<any[]>([]);
+
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponPercent, setNewCouponPercent] = useState(20);
+
+  const fetchLocalBackups = async () => {
+    try {
+      const res = await fetch('/api/backup/local-list');
+      const data = await res.json();
+      if (data.success) {
+        setLocalBackups(data.files || []);
+      }
+    } catch (e) {
+      console.error('Error fetching list of local restore points:', e);
+    }
+  };
+
+  const handleCreateLocalBackup = async () => {
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/backup/create-local', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('نقطه بازیابی دستی (Snapshot) با موفقیت روی حافظه سرور ایجاد شد.');
+        fetchLocalBackups();
+      } else {
+        alert('خطا در ایجاد نقطه بازیابی: ' + data.message);
+      }
+    } catch (e: any) {
+      alert('خطا در شبکه: ' + e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRestoreLocalBackup = async (filename: string) => {
+    if (!confirm(`⚠️ هشدار بسیار مهم:\nآیا مطمئن هستید که می‌خواهید کل اطلاعات دیتابیس ربات (مشتری‌ها، نمایندگان، کدهای تخفیف، تراکنش‌ها و...) را به تاریخچه فایل "${filename}" برگردانید؟ تمامی اطلاعات بعد از این تاریخ از بین خواهد رفت.`)) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await fetch('/api/backup/restore-local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('✅ دیتابیس با موفقیت بازگردانی شد و ربات با اطلاعات قدیمی راه‌اندازی گردید.');
+        window.location.reload();
+      } else {
+        alert('در بازیابی خطا رخ داد: ' + data.message);
+      }
+    } catch (e: any) {
+      alert('خطای اتصال به سرور: ' + e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleUnlinkLocalBackup = async (filename: string) => {
+    if (!confirm(`آیا از حذف برگشت‌ناپذیر فایل بکاپ "${filename}" مطمئن هستید؟`)) {
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await fetch(`/api/backup/delete-local/${filename}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        fetchLocalBackups();
+      } else {
+        alert('خطا در حذف بکاپ: ' + data.message);
+      }
+    } catch (e: any) {
+      alert('خطا در شبکه: ' + e.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const handleAddCoupon = async () => {
     if (!newCouponCode) {
@@ -183,6 +262,8 @@ function SettingsView() {
           setAdminIdsStr(data.adminIds.join(', '));
         }
       });
+
+    fetchLocalBackups();
 
     // Prefetch inbounds automatically on mount if connected
     fetch('/api/xui-inbounds')
@@ -491,6 +572,12 @@ function SettingsView() {
             <input type="text" value={state.panel.apiKey || ''} onChange={e => setState({...state, panel: {...state.panel, apiKey: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-left" dir="ltr" placeholder="vXg7hY..." />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">دامنه یا بیس آدرس اختصاصی برای لینک‌های ساب (Subscription Base URL)</label>
+            <input type="text" value={state.panel.subUrlBase || ''} onChange={e => setState({...state, panel: {...state.panel, subUrlBase: e.target.value}})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-left" dir="ltr" placeholder="https://sub.mydomain.com/" />
+            <p className="text-xs text-slate-400 mt-1">💡 اختیاری: اگر خالی بماند، لینک‌های ساب بر اساس آدرس اصلی پنل به صورت خودکار ساخته خواهند شد.</p>
+          </div>
+
           <div className="space-y-4">
             <div className="bg-amber-50 border border-amber-200 p-3 rounded-lg flex items-start gap-3">
               <Settings2 className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
@@ -653,70 +740,185 @@ function SettingsView() {
       </div>
 
       {/* Backup and Restore Secured System */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-        <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-slate-850">
-          <Download className="w-5 h-5 text-indigo-600" /> پشتیبان‌گیری و بازیابی کل اطلاعات (بکاپ دیتابیس با رمز)
-        </h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 divide-y md:divide-y-0 md:divide-x md:divide-x-reverse divide-slate-200">
-          {/* Download Encrypted Backup column */}
-          <div className="space-y-4 pb-4 md:pb-0">
-            <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">📥 تهیه پشتیبان رمزگذاری شده</h3>
-            <p className="text-xs text-slate-400">یک رمز عبور جهت قفل کردن اطلاعات دیتابیس (امنیتی) وارد نموده و فایل پشتیبان را دانلود نمایید.</p>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">رمز عبور دلخواه برای فایل بکاپ</label>
-              <input 
-                type="password" 
-                value={backupPassword} 
-                onChange={e => setBackupPassword(e.target.value)} 
-                className="w-full px-3 py-1.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-xs" 
-                placeholder="مثلاً MySecuredPass" 
-              />
-            </div>
-            <button 
-              onClick={handleDownloadBackup} 
-              disabled={actionLoading} 
-              className="bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-700 transition flex items-center text-xs font-medium"
+      <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 mt-6 space-y-6">
+        <div>
+          <h2 className="text-lg font-bold flex items-center gap-2 text-slate-800 justify-start flex-row-reverse text-right">
+            <span className="ml-auto">🛡️ موتور هوشمند پشتیبان‌گیری و بازیابی فوق‌سریع دیتابیس</span>
+            <Download className="w-5 h-5 text-indigo-600" />
+          </h2>
+          <p className="text-xs text-slate-500 mt-1 leading-relaxed text-right">
+            سیستم به طور خودکار با هر تغییر وضعیت در پنل، تنظیمات، تراکنش‌ها یا مشتریان، تا حداکثر ۲۰ کپی زمانی (Snapshot) به عنوان نقطه بازگردانی روی سرور ذخیره می‌کند. همچنین می‌توانید در هر زمان به صورت اینترنتی بکاپ را دانلود یا مجدداً لود نمایید.
+          </p>
+        </div>
+
+        {/* 1. Local Restore Points Table & Actions */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 space-y-4">
+          <div className="flex flex-col md:flex-row items-center md:justify-between gap-3 border-b pb-3 border-slate-100 flex-row-reverse">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 justify-start flex-row-reverse">
+              <span>📋 لیست نقاط بازگردانی زمانی (Local Snapshots)</span>
+            </h3>
+            <button
+              onClick={handleCreateLocalBackup}
+              disabled={actionLoading}
+              className="bg-indigo-600 text-white hover:bg-indigo-700 font-semibold text-xs px-3.5 py-2 rounded-md transition duration-150 flex items-center gap-1.5 self-end"
             >
-              <Download className="w-3.5 h-3.5 ml-1.5" /> دانلود فایل بکاپ (.json)
+              <span>📸 ثبت و ایجاد سریع نقطه بازگردانی دستی</span>
             </button>
           </div>
 
-          {/* Upload and Decrypt Restore column */}
-          <div className="space-y-4 pt-4 md:pt-0 md:pr-4">
-            <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5">📤 بازیابی فایل پشتیبان</h3>
-            <p className="text-xs text-slate-400">فایل بکاپ را آپلود کرده و رمز عبور قفل را برای بازگشایی و بازنویسی دیتابیس بنویسید.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-slate-50 border-b text-slate-650">
+                <tr>
+                  <th className="px-3 py-2.5 font-semibold">ردیف</th>
+                  <th className="px-3 py-2.5 font-semibold">نام فایل نقطه بازیابی</th>
+                  <th className="px-3 py-2.5 font-semibold">نوع نسخه</th>
+                  <th className="px-3 py-2.5 font-semibold">تاریخ ایجاد</th>
+                  <th className="px-3 py-2.5 font-semibold">حجم فایل</th>
+                  <th className="px-3 py-2.5 font-semibold text-left">عملیات بازگردانی</th>
+                </tr>
+              </thead>
+              <tbody>
+                {localBackups.map((b, idx) => (
+                  <tr key={b.filename} className="border-b last:border-0 hover:bg-slate-50/60 transition">
+                    <td className="px-3 py-3 font-mono text-slate-400">{idx + 1}</td>
+                    <td className="px-3 py-3">
+                      <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-705 text-[10px] break-all">{b.filename}</span>
+                    </td>
+                    <td className="px-3 py-3">
+                      {b.type === 'manual' ? (
+                        <span className="bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-semibold text-[10px]">دستی (Manual)</span>
+                      ) : (
+                        <span className="bg-sky-50 text-sky-700 border border-sky-100 px-2 py-0.5 rounded-full font-semibold text-[10px]">خودکار سیستم</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-slate-600 font-medium">
+                      {new Date(b.createdAt).toLocaleString('fa-IR', { hour12: false })}
+                    </td>
+                    <td className="px-3 py-3 font-mono text-slate-500">{(b.sizeBytes / 1024).toFixed(2)} KB</td>
+                    <td className="px-3 py-3 text-left flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleRestoreLocalBackup(b.filename)}
+                        disabled={actionLoading}
+                        className="bg-emerald-55 text-emerald-700 border border-emerald-100 hover:bg-emerald-100 hover:text-emerald-800 transition px-2.5 py-1 rounded font-semibold text-[11px]"
+                      >
+                        بازیابی این نسخه
+                      </button>
+                      <button
+                        onClick={() => handleUnlinkLocalBackup(b.filename)}
+                        disabled={actionLoading}
+                        className="bg-red-50 text-red-600 border border-red-100 hover:bg-red-100 hover:text-red-700 transition p-1 rounded"
+                        title="حذف دائمی"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {localBackups.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-6 text-center text-slate-400 text-xs text-right">
+                      هیچ نقطه بازیابی محلی در حال حاضر یافت نشد. به زودی اولین کپی‌های خودکار ثبت خواهند شد.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* 2. Download / Upload External Backup Section (2 columns split) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-200 divide-y md:divide-y-0 md:divide-x md:divide-x-reverse divide-slate-200">
+          {/* Column A: Download backup formats */}
+          <div className="space-y-4 pb-4 md:pb-0 text-right">
+            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5 justify-start flex-row-reverse">
+              <span>📥 دانلود و خروجی فایلی دیتابیس (Export)</span>
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">بکاپ کامل دیتابیس بات شامل اعضا، بدهی‌ها، محصولات و توکن‌ها را با یکی از قالب‌های زیر دانلود کنید:</p>
             
-            <div className="space-y-2">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">انتخاب فایل پشتیبان (.json)</label>
-                <input 
-                  type="file" 
-                  accept=".json" 
-                  onChange={e => setSelectedFile(e.target.files?.[0] || null)} 
-                  className="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer" 
-                />
+            <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-200">
+              {/* Plain Download Option */}
+              <div className="flex items-center justify-between gap-3 border-b pb-3 border-slate-100 flex-row-reverse">
+                <div className="text-right">
+                  <h4 className="text-xs font-bold text-slate-800">۱. دانلود مستقیم و بدون رمز (سریع)</h4>
+                  <p className="text-[10px] text-slate-400 mt-0.5">دانلود سریع به صورت فایل JSON خام و آماده بازنشانی</p>
+                </div>
+                <a 
+                  href="/api/backup/plain-download"
+                  download
+                  className="bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1.5 rounded hover:bg-slate-200 transition text-[11px] font-semibold flex items-center gap-1 shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" /> دانلود JSON خام
+                </a>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">رمز عبور فایل جهت بازگشایی</label>
-                <input 
-                  type="password" 
-                  value={restorePassword} 
-                  onChange={e => setRestorePassword(e.target.value)} 
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-xs" 
-                  placeholder="رمز عبور بکاپ" 
-                />
+              {/* Encrypted Download Option */}
+              <div className="space-y-3 pt-1">
+                <h4 className="text-xs font-bold text-slate-800 text-right">۲. خروجی فوق‌امنیتی رمزگذاری شده</h4>
+                <div className="space-y-2">
+                  <label className="block text-[11px] text-slate-500 text-right font-medium">تعриф رمز عبور یا کلید خصوصی جهت قفل کردن فایل بکاپ:</label>
+                  <input 
+                    type="password" 
+                    value={backupPassword} 
+                    onChange={e => setBackupPassword(e.target.value)} 
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-xs text-left" 
+                    dir="ltr"
+                    placeholder="MySecuredPass" 
+                  />
+                </div>
+                <button 
+                  onClick={handleDownloadBackup} 
+                  disabled={actionLoading} 
+                  className="bg-indigo-600 text-white px-3 py-1.5 rounded hover:bg-indigo-700 transition flex items-center text-xs font-medium mr-auto"
+                >
+                  <Download className="w-3.5 h-3.5 ml-1.5" /> تولید و دانلود فایل رمزگذاری شده
+                </button>
               </div>
             </div>
+          </div>
 
-            <button 
-              onClick={handleRestoreBackup} 
-              disabled={actionLoading} 
-              className="bg-emerald-600 text-white px-3 py-1.5 rounded-md hover:bg-emerald-700 transition flex items-center text-xs font-medium mr-auto"
-            >
-              <Upload className="w-3.5 h-3.5 ml-1.5" /> بازیابی و اعمال بکاپ
-            </button>
+          {/* Column B: Upload and Restore backup from External File */}
+          <div className="space-y-4 pt-4 md:pt-0 md:pr-4 text-right">
+            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5 justify-start flex-row-reverse">
+              <span>📤 ورود و ریکاوری فایلی دیتابیس (Import)</span>
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">فایل پشتیبان خارجی با پسوند <code>.json</code> را انتخاب کرده و جهت بازنشانی و جایگذاری تمام اطلاعات آپلود کنید:</p>
+            
+            <div className="space-y-4 bg-white p-4 rounded-xl border border-slate-205">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1 text-right">فایل بکاپ را انتخاب کنید:</label>
+                  <input 
+                    type="file" 
+                    accept=".json" 
+                    onChange={e => setSelectedFile(e.target.files?.[0] || null)} 
+                    className="w-full text-xs text-slate-550 file:mr-4 file:py-1.5 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer" 
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-650 mb-1 text-right">رمز بازگشایی (اگر فایل رمزشده است وارد کنید):</label>
+                  <input 
+                    type="password" 
+                    value={restorePassword} 
+                    onChange={e => setRestorePassword(e.target.value)} 
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 font-mono text-xs text-left" 
+                    dir="ltr"
+                    placeholder="رمز عبور بکاپ" 
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button 
+                  onClick={handleRestoreBackup} 
+                  disabled={actionLoading} 
+                  className="bg-emerald-600 text-white px-3.5 py-1.5 rounded hover:bg-emerald-700 transition flex items-center text-xs font-medium mr-auto"
+                >
+                  <Upload className="w-3.5 h-3.5 ml-1.5" /> آپلود، بازیابی و بازنشانی دیتابیس
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1002,4 +1204,310 @@ function UsersView() {
       </div>
     </div>
   )
+}
+
+function SellersView() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [newChatId, setNewChatId] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newLimit, setNewLimit] = useState('1000000');
+  const [loading, setLoading] = useState(false);
+
+  const fetchUsers = () => {
+    fetch('/api/state')
+      .then((r) => r.json())
+      .then((s) => setUsers(s.users || []));
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const sellers = users.filter((u) => u.isSeller);
+
+  const handleAddSeller = async (e: any) => {
+    e.preventDefault();
+    if (!newChatId) {
+      alert('شناسه عددی کاربری الزامی است.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch('/api/users/add-seller', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chatId: newChatId,
+          username: newUsername,
+          debtLimit: Number(newLimit) || 1000000,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert('همکار جدید با موفقیت اضافه شد.');
+        setUsers(data.users || []);
+        setNewChatId('');
+        setNewUsername('');
+        setNewLimit('1000000');
+      } else {
+        alert('خطا: ' + data.message);
+      }
+    } catch (err: any) {
+      alert('خطای اتصال: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const settleDebt = async (chatId: number) => {
+    if (
+      !confirm(
+        'آیا مطمئن هستید که می‌خواهید بدهی مالی و حجمی این همکار را صفر (تسویه حساب کامل) کنید؟'
+      )
+    )
+      return;
+    const res = await fetch(`/api/users/${chatId}/settle`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      setUsers(
+        users.map((u) =>
+          u.chatId === chatId ? { ...u, debt: 0, debtVolume: 0 } : u
+        )
+      );
+      alert('حساب همکار با موفقیت تسویه گردید.');
+    }
+  };
+
+  const changeLimits = async (chatId: number, currentLimit?: number, currentVolumeGob?: number, currentDebt?: number) => {
+    const limitPrompt = prompt(
+      'سقف بدهی مجاز همکار را وارد کنید (تومان):',
+      String(currentLimit || 1000000)
+    );
+    if (limitPrompt === null) return;
+    const newLimitNum = Number(limitPrompt);
+    if (isNaN(newLimitNum)) {
+      alert('مقدار سقف بدهی وارد شده معتبر نیست.');
+      return;
+    }
+
+    const valVolumePrompt = prompt(
+      'حجم بدهی همکار را وارد کنید (گیگابایت):',
+      String(currentVolumeGob || 0)
+    );
+    if (valVolumePrompt === null) return;
+    const newVolumeNum = Number(valVolumePrompt);
+    if (isNaN(newVolumeNum)) {
+      alert('مقدار حجم بدهی وارد شده معتبر نیست.');
+      return;
+    }
+
+    const valDebtPrompt = prompt(
+      'میزان بدهی مالی فعلی همکار را وارد کنید (تومان):',
+      String(currentDebt || 0)
+    );
+    if (valDebtPrompt === null) return;
+    const newDebtNum = Number(valDebtPrompt);
+    if (isNaN(newDebtNum)) {
+      alert('مقدار بدهی مالی وارد شده معتبر نیست.');
+      return;
+    }
+
+    const res = await fetch(`/api/users/${chatId}/seller-limits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        debtLimit: newLimitNum,
+        debtVolume: newVolumeNum,
+        debt: newDebtNum,
+      }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setUsers(
+        users.map((u) =>
+          u.chatId === chatId
+            ? {
+                ...u,
+                debtLimit: newLimitNum,
+                debtVolume: newVolumeNum,
+                debt: newDebtNum,
+              }
+            : u
+        )
+      );
+      alert('تغییرات با موفقیت ذخیره گردید.');
+    }
+  };
+
+  const removeSeller = async (chatId: number) => {
+    if (
+      !confirm(
+        'آیا از لغو نقش همکار به کاربر عادی مطمئن هستید؟ بدهی‌های او پاک نخواهد شد.'
+      )
+    )
+      return;
+    const res = await fetch(`/api/users/${chatId}/role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isSeller: false }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      setUsers(
+        users.map((u) => (u.chatId === chatId ? { ...u, isSeller: false } : u))
+      );
+      alert('دسترسی همکار لغو گردید.');
+    }
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6" dir="rtl">
+      {/* Introduction Banner */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h3 className="text-lg font-bold text-slate-900 mb-2">👥 پنل اختصاصی مدیریت نمایندگان (همکاران فروشنده)</h3>
+        <p className="text-sm text-slate-600 leading-relaxed">
+          در این بخش می‌توانید حساب‌های همکاران و نمایندگان فروش خود را مدیریت کنید. کارهای آنها به سقف اعتباری که مشخص می‌کنید محدود شده است و خریدهای آنها در پنل سنایی به صورت خودکار تحت فولدری با آیدی تلگرام آنها گروه بندی می‌شود.
+        </p>
+      </div>
+
+      {/* Add Seller Form */}
+      <form onSubmit={handleAddSeller} className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <h4 className="font-semibold text-slate-800 mb-4 flex items-center gap-2 text-right justify-start flex-row-reverse">
+          <span className="ml-auto">افزودن نماینده همکار جدید</span>
+          <Plus className="w-5 h-5 text-indigo-600" />
+        </h4>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div className="text-right">
+            <label className="block text-xs font-medium text-slate-700 mb-1">شناسه عددی تلگرام (Chat ID)</label>
+            <input
+              type="text"
+              required
+              placeholder="مثلا 14023924"
+              value={newChatId}
+              onChange={(e) => setNewChatId(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md text-sm font-mono text-left"
+              dir="ltr"
+            />
+          </div>
+          <div className="text-right">
+            <label className="block text-xs font-medium text-slate-700 mb-1">آیدی تلگرام بدون @ (نام کاربری)</label>
+            <input
+              type="text"
+              placeholder="مثلا PartnerVPN"
+              value={newUsername}
+              onChange={(e) => setNewUsername(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md text-sm font-mono text-left"
+              dir="ltr"
+            />
+          </div>
+          <div className="text-right">
+            <label className="block text-xs font-medium text-slate-700 mb-1">سقف بدهی مجاز اولیه (تومان)</label>
+            <input
+              type="number"
+              placeholder="1000000"
+              value={newLimit}
+              onChange={(e) => setNewLimit(e.target.value)}
+              className="w-full px-3 py-2 border rounded-md text-sm text-left font-mono"
+              dir="ltr"
+            />
+          </div>
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition font-semibold text-sm h-10 flex items-center justify-center gap-1"
+            >
+              <Plus className="w-4 h-4 animate-pulse" /> <span>ثبت نماینده جدید</span>
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {/* Sellers List Table */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <table className="w-full text-right">
+          <thead className="bg-slate-50 border-b">
+            <tr>
+              <th className="px-6 py-4 font-semibold text-slate-600">همکار / شناسه‌تلگرام</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">بدهی مالی / سقف خرید</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">کل بدهی حجمی (GB)</th>
+              <th className="px-6 py-4 font-semibold text-slate-600">کل فروش تجمعی</th>
+              <th className="px-6 py-4 font-semibold text-slate-600 text-left">عملیات مدیریت</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sellers.map((u) => {
+              const currentDebt = u.debt || 0;
+              const limit = u.debtLimit !== undefined ? u.debtLimit : 1000000;
+              const remains = Math.max(0, limit - currentDebt);
+              return (
+                <tr key={u.chatId} className="border-b last:border-0 hover:bg-slate-50 transition">
+                  <td className="px-6 py-4">
+                    <div className="font-bold text-slate-900" dir="ltr">
+                      {u.username ? `@${u.username}` : 'No Username'}
+                    </div>
+                    <div className="text-xs text-slate-500 font-mono" dir="ltr">
+                      {u.chatId}
+                    </div>
+                    <div className="text-[10px] text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded inline-block mt-1">
+                      گروه: {u.username ? u.username : `Seller_${u.chatId}`}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="text-sm font-bold text-red-650">
+                      بدهی: <span className="font-mono">{currentDebt.toLocaleString()}</span> تومان
+                    </div>
+                    <div className="text-xs text-slate-550 mt-1">
+                      سقف مجاز: <span className="font-mono">{limit.toLocaleString()}</span> تومان
+                    </div>
+                    <div className="text-xs text-emerald-600 font-semibold mt-0.5">
+                      اعتبار باقیمانده: <span className="font-mono">{remains.toLocaleString()}</span> تومان
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="font-mono text-slate-800 font-bold text-sm">
+                      {(u.debtVolume || 0).toLocaleString()} GB
+                    </div>
+                    <p className="text-[10px] text-slate-400">مجموع حجم کارهای همکار</p>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="font-mono text-slate-700 text-sm font-semibold">
+                      {(u.totalSales || 0).toLocaleString()} تومان
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-left flex items-center justify-end gap-2 h-20">
+                    <button
+                      onClick={() => changeLimits(u.chatId, u.debtLimit, u.debtVolume, u.debt)}
+                      className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-medium text-xs transition"
+                    >
+                      ویرایش سقف و بدهی
+                    </button>
+                    <button
+                      onClick={() => settleDebt(u.chatId)}
+                      className="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-md font-medium text-xs transition"
+                    >
+                      تسویه کامل حساب
+                    </button>
+                    <button
+                      onClick={() => removeSeller(u.chatId)}
+                      className="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-105 rounded-md font-medium text-xs transition border border-red-200"
+                    >
+                      لغو دسترسی همکار
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+            {sellers.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
+                  هیچ نماینده همکاری ایجاد نگردیده است.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }

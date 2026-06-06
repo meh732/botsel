@@ -8,6 +8,7 @@ export interface PanelConfig {
   inboundId?: number | string;
   inboundIds?: (number | string)[];
   apiKey?: string;
+  subUrlBase?: string;
 }
 
 export interface Product {
@@ -41,6 +42,8 @@ export interface User {
   referralsMade?: number;
   isSeller?: boolean;
   debt?: number;
+  debtVolume?: number;
+  debtLimit?: number;
   totalSales?: number;
   purchases?: Purchase[];
 }
@@ -108,9 +111,81 @@ class Database {
     }
   }
 
+  private lastBackupTime = 0;
+
+  private triggerAutoBackup() {
+    try {
+      const now = Date.now();
+      // Wait at least 1 minute between auto-backups to prevent disk spam
+      if (now - this.lastBackupTime < 60000) {
+        return;
+      }
+      this.lastBackupTime = now;
+
+      const BACKUPS_DIR = path.join(process.cwd(), 'backups');
+      if (!fs.existsSync(BACKUPS_DIR)) {
+        fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+      }
+
+      const timestamp = new Date().toISOString()
+        .replace(/T/, '_')
+        .replace(/\..+/, '')
+        .replace(/:/g, '-');
+      const backupPath = path.join(BACKUPS_DIR, `backup_auto_${timestamp}.json`);
+      
+      fs.writeFileSync(backupPath, JSON.stringify(this.state, null, 2), 'utf8');
+      console.log(`[Backup Engine] Auto snapshot saved: backup_auto_${timestamp}.json`);
+
+      // Keep only the last 20 backups overall
+      const files = fs.readdirSync(BACKUPS_DIR)
+        .filter(f => f.startsWith('backup_') && f.endsWith('.json'))
+        .map(f => {
+          const filePath = path.join(BACKUPS_DIR, f);
+          return { name: f, path: filePath, time: fs.statSync(filePath).mtime.getTime() };
+        })
+        .sort((a, b) => b.time - a.time);
+
+      if (files.length > 20) {
+        const toDelete = files.slice(20);
+        for (const item of toDelete) {
+          try {
+            fs.unlinkSync(item.path);
+            console.log(`[Backup Engine] Pruned outdated snapshot: ${item.name}`);
+          } catch (delErr) {}
+        }
+      }
+    } catch (err: any) {
+      console.error('[Backup Engine] Failed to save auto backup snapshot:', err.message);
+    }
+  }
+
+  public createManualBackup() {
+    try {
+      const BACKUPS_DIR = path.join(process.cwd(), 'backups');
+      if (!fs.existsSync(BACKUPS_DIR)) {
+        fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+      }
+
+      const timestamp = new Date().toISOString()
+        .replace(/T/, '_')
+        .replace(/\..+/, '')
+        .replace(/:/g, '-');
+      const filename = `backup_manual_${timestamp}.json`;
+      const backupPath = path.join(BACKUPS_DIR, filename);
+      
+      fs.writeFileSync(backupPath, JSON.stringify(this.state, null, 2), 'utf8');
+      console.log(`[Backup Engine] Manual restore point created: ${filename}`);
+      return filename;
+    } catch (err: any) {
+      console.error('[Backup Engine] Manual backup creation failed:', err.message);
+      throw err;
+    }
+  }
+
   private save() {
     try {
       fs.writeFileSync(DB_PATH, JSON.stringify(this.state, null, 2));
+      this.triggerAutoBackup();
     } catch (e) {
       console.error('Failed to save db.json', e);
     }

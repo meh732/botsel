@@ -309,7 +309,7 @@ class XuiClient {
     }
   }
 
-  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: string | number | (string | number)[], limitIp: number = 0, telegramId?: string) {
+  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: string | number | (string | number)[], limitIp: number = 0, telegramId?: string, group?: string) {
     const state = db.getState();
     let rawTargets: (string | number)[] = [];
 
@@ -430,7 +430,8 @@ class XuiClient {
         limitIp: Number(limitIp) || 0,
         flow: "",
         tgId: telegramId || "",
-        subId: subId
+        subId: subId,
+        group: group || ""
       };
 
       // Add "Attached inbounds" tags using specifically 'inboundTags' field
@@ -468,7 +469,8 @@ class XuiClient {
             limitIp: Number(limitIp) || 0,
             flow: "",
             tgId: telegramId ? (Number(telegramId) || 0) : 0, // must be integer / number (int64 in Go)
-            subId: subId
+            subId: subId,
+            group: group || ""
           },
           inboundIds: finalInboundIds
         };
@@ -587,8 +589,17 @@ class XuiClient {
       }
 
       const domain = new URL(state.panel.url).hostname;
-      const subPath = state.panel.url.endsWith('/') ? state.panel.url : state.panel.url + '/';
-      const subUrlStr = `${subPath}sub/${subId}`;
+      let subUrlStr;
+      if (state.panel.subUrlBase && state.panel.subUrlBase.trim() !== '') {
+        let base = state.panel.subUrlBase.trim();
+        if (!base.endsWith('/')) {
+          base += '/';
+        }
+        subUrlStr = `${base}${subId}`;
+      } else {
+        const subPath = state.panel.url.endsWith('/') ? state.panel.url : state.panel.url + '/';
+        subUrlStr = `${subPath}sub/${subId}`;
+      }
 
       return {
         uuid: clientId,

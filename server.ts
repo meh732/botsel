@@ -105,7 +105,7 @@ async function startServer() {
   });
 
   api.post("/update-panel", async (req, res) => {
-    const { url, username, password, inboundId, inboundIds, apiKey } = req.body;
+    const { url, username, password, inboundId, inboundIds, apiKey, subUrlBase } = req.body;
     const currentState = db.getState();
     
     const newPanel = { ...currentState.panel };
@@ -117,6 +117,7 @@ async function startServer() {
       newPanel.inboundIds = parseInboundIds(inboundIds);
     }
     if (apiKey !== undefined) newPanel.apiKey = apiKey;
+    if (subUrlBase !== undefined) newPanel.subUrlBase = subUrlBase;
 
     db.updateState({ panel: newPanel });
     res.json({ success: true });
@@ -218,6 +219,125 @@ async function startServer() {
     }
   });
 
+  api.get("/backup/local-list", (req, res) => {
+    try {
+      const BACKUPS_DIR = path.join(process.cwd(), 'backups');
+      if (!fs.existsSync(BACKUPS_DIR)) {
+        fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+      }
+      
+      const files = fs.readdirSync(BACKUPS_DIR)
+        .filter(f => f.startsWith('backup_') && f.endsWith('.json'))
+        .map(f => {
+          const filePath = path.join(BACKUPS_DIR, f);
+          const stat = fs.statSync(filePath);
+          return {
+            filename: f,
+            createdAt: stat.mtime.toISOString(),
+            sizeBytes: stat.size,
+            type: f.startsWith('backup_manual_') ? 'manual' : 'auto'
+          };
+        })
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // Newest first
+
+      res.json({ success: true, files });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در بازخوانی لیست نقاط بازیابی.' });
+    }
+  });
+
+  api.post("/backup/create-local", (req, res) => {
+    try {
+      const filename = db.createManualBackup();
+      res.json({ success: true, filename });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در ایجاد نقطه بازیابی جدید.' });
+    }
+  });
+
+  api.post("/backup/restore-local", (req, res) => {
+    try {
+      const { filename } = req.body;
+      if (!filename) {
+        return res.status(400).json({ success: false, message: 'نام فایل پشتیبان الزامی است.' });
+      }
+
+      const BACKUPS_DIR = path.join(process.cwd(), 'backups');
+      const backupPath = path.join(BACKUPS_DIR, filename);
+
+      // Simple security check (prevent directory traversal)
+      if (!filename.startsWith('backup_') || !filename.endsWith('.json') || filename.includes('/') || filename.includes('..')) {
+        return res.status(400).json({ success: false, message: 'نام فایل معتبر نیست.' });
+      }
+
+      if (!fs.existsSync(backupPath)) {
+        return res.status(404).json({ success: false, message: 'فایل نقطه پشتیبان یافت نشد.' });
+      }
+
+      const rawData = fs.readFileSync(backupPath, 'utf8');
+      const parsed = JSON.parse(rawData);
+
+      if (!parsed.panel || !parsed.users) {
+        return res.status(400).json({ success: false, message: 'ساختار فایل پشتیبان معتبر نیست.' });
+      }
+
+      // Overwrite db.json
+      const dbPath = path.join(process.cwd(), 'db.json');
+      fs.writeFileSync(dbPath, JSON.stringify(parsed, null, 2), 'utf8');
+      
+      // Update DB state
+      db.updateState(parsed);
+
+      // Re-initialize bot
+      initBot();
+
+      res.json({ success: true, message: 'موفقیت‌آمیز: کل دیتابیس با موفقیت به این نقطه بازیابی بازگردانده شد.' });
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در بازیابی اطلاعات با فایل نقطه‌ای.' });
+    }
+  });
+
+  api.delete("/backup/delete-local/:filename", (req, res) => {
+    try {
+      const { filename } = req.params;
+      if (!filename) {
+        return res.status(400).json({ success: false, message: 'نام فایل الزامی است.' });
+      }
+
+      const BACKUPS_DIR = path.join(process.cwd(), 'backups');
+      const backupPath = path.join(BACKUPS_DIR, filename);
+
+      // Security check (prevent directory traversal)
+      if (!filename.startsWith('backup_') || !filename.endsWith('.json') || filename.includes('/') || filename.includes('..')) {
+        return res.status(400).json({ success: false, message: 'نام فایل معتبر نیست.' });
+      }
+
+      if (fs.existsSync(backupPath)) {
+        fs.unlinkSync(backupPath);
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ success: false, message: 'فایل پیدا نشد.' });
+      }
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در حذف فایل پشتیبان.' });
+    }
+  });
+
+  api.get("/backup/plain-download", (req, res) => {
+    try {
+      const dbPath = path.join(process.cwd(), 'db.json');
+      if (!fs.existsSync(dbPath)) {
+        return res.status(404).json({ success: false, message: 'فایل دیتابیس اصلی یافت نشد.' });
+      }
+      const rawData = fs.readFileSync(dbPath, 'utf8');
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename=sanaei_bot_plain_backup_${Date.now()}.json`);
+      res.send(rawData);
+    } catch (e: any) {
+      res.status(500).json({ success: false, message: e.message || 'خطا در دانلود دیتابیس.' });
+    }
+  });
+
   api.post("/products", (req, res) => {
     const product = req.body;
     if (!product.id) {
@@ -271,20 +391,72 @@ async function startServer() {
     const user = db.getUser(parseInt(req.params.chatId));
     if (!user) return res.status(404).json({ success: false });
     user.isSeller = isSeller;
-    if (isSeller && user.debt === undefined) {
-      user.debt = 0;
-      user.totalSales = 0;
+    if (isSeller) {
+      if (user.debt === undefined) user.debt = 0;
+      if (user.debtVolume === undefined) user.debtVolume = 0;
+      if (user.debtLimit === undefined) user.debtLimit = 1000000; // Default 1M Toman Limit
+      if (user.totalSales === undefined) user.totalSales = 0;
     }
     db.saveUser(user);
     res.json({ success: true });
+  });
+
+  api.post("/users/:chatId/seller-limits", (req, res) => {
+    const { debtLimit, debtVolume, debt } = req.body;
+    const user = db.getUser(parseInt(req.params.chatId));
+    if (!user) return res.status(404).json({ success: false, message: 'کاربر پیدا نشد' });
+    
+    if (debtLimit !== undefined) user.debtLimit = Number(debtLimit);
+    if (debtVolume !== undefined) user.debtVolume = Number(debtVolume);
+    if (debt !== undefined) user.debt = Number(debt);
+    
+    db.saveUser(user);
+    res.json({ success: true, user });
+  });
+
+  api.post("/users/add-seller", (req, res) => {
+    const { chatId, username, debtLimit } = req.body;
+    if (!chatId) {
+      return res.status(400).json({ success: false, message: 'شناسه عددی کاربری الزاماً باید فرستاده شود.' });
+    }
+    const numChatId = parseInt(chatId);
+    if (isNaN(numChatId)) {
+      return res.status(400).json({ success: false, message: 'شناسه عددی وارد شده معتبر نمی‌باشد.' });
+    }
+
+    let user = db.getUser(numChatId);
+    if (!user) {
+      user = {
+        chatId: numChatId,
+        username: username || '',
+        balance: 0,
+        testUsed: false,
+        registeredAt: new Date().toISOString(),
+        isSeller: true,
+        debt: 0,
+        debtVolume: 0,
+        debtLimit: Number(debtLimit) || 1000000,
+        totalSales: 0,
+        purchases: []
+      };
+    } else {
+      user.isSeller = true;
+      if (user.debt === undefined) user.debt = 0;
+      if (user.debtVolume === undefined) user.debtVolume = 0;
+      if (debtLimit !== undefined) user.debtLimit = Number(debtLimit);
+    }
+
+    db.saveUser(user);
+    res.json({ success: true, users: db.getState().users });
   });
 
   api.post("/users/:chatId/settle", (req, res) => {
     const user = db.getUser(parseInt(req.params.chatId));
     if (!user) return res.status(404).json({ success: false });
     user.debt = 0;
+    user.debtVolume = 0; // Reset active package volume debt too
     db.saveUser(user);
-    res.json({ success: true, debt: user.debt });
+    res.json({ success: true, debt: user.debt, debtVolume: user.debtVolume });
   });
 
   app.use("/api", api);
