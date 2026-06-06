@@ -6,6 +6,11 @@ import { db } from './db.js';
 class XuiClient {
   private client: AxiosInstance;
   private cookie: string = '';
+  private workingApiPrefix: string = '';
+  private lastPanelUrl: string = '';
+  private lastPanelUser: string = '';
+  private lastPanelPass: string = '';
+  private lastPanelApiKey: string = '';
 
   constructor() {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -25,10 +30,31 @@ class XuiClient {
   private async getAuthOptions(panelOverride?: any) {
     const state = db.getState();
     const panel = panelOverride || state.panel;
-    if (!panel.url || (!panel.apiKey && (!panel.username || !panel.password))) {
-      throw new Error('مشخصات پنل متصل نشده است. لطفا آدرس، یا کلید API یا نام کاربری و رمز ورود را در بخش تنظیمات وارد نمایید.');
+    
+    // Check which authentication method is configured
+    const hasApiKey = panel.apiKey && panel.apiKey.trim() !== '';
+    const hasUserPass = (panel.username && panel.username.trim() !== '') && (panel.password && panel.password.trim() !== '');
+
+    if (!panel.url || (!hasApiKey && !hasUserPass)) {
+      throw new Error('مشخصات پنل کامل نیست. لطفا آبرس کامل پنل را به همراه «نام کاربری و رمز ورود» و یا «کلید API Key» وارد نمایید.');
     }
     
+    // Clear cookie and prefix cache if connection details changed
+    if (
+      panel.url !== this.lastPanelUrl ||
+      panel.username !== this.lastPanelUser ||
+      panel.password !== this.lastPanelPass ||
+      panel.apiKey !== this.lastPanelApiKey
+    ) {
+      console.log('[X-UI] Panel connection configurations changed. Cleared cookie session cache.');
+      this.cookie = '';
+      this.workingApiPrefix = '';
+      this.lastPanelUrl = panel.url || '';
+      this.lastPanelUser = panel.username || '';
+      this.lastPanelPass = panel.password || '';
+      this.lastPanelApiKey = panel.apiKey || '';
+    }
+
     // Auto-prepend http:// if no protocol is defined
     let formattedUrl = panel.url.trim().replace(/\s/g, '');
     if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
@@ -47,7 +73,8 @@ class XuiClient {
         }
     }
 
-    if (panel.apiKey) {
+    // 1. Prioritize API Key login if provided
+    if (hasApiKey) {
       const apiKey = panel.apiKey.trim();
       console.log(`[X-UI] Authenticating using API Key with baseURL: ${baseURL}`);
       return { 
@@ -55,14 +82,17 @@ class XuiClient {
         headers: { 
           'Api-Key': apiKey, 
           'X-Api-Key': apiKey, 
+          'X-API-KEY': apiKey,
+          'api-key': apiKey,
           'Authorization': `Bearer ${apiKey}`, 
           'Accept': 'application/json' 
         } 
       };
     }
 
+    // 2. Fall back to Session Cookie (login) authentication
     if (!this.cookie) {
-      console.log(`[X-UI] No session. Trying login at: ${baseURL}`);
+      console.log(`[X-UI] No session cookie. Trying login credentials at: ${baseURL}`);
       const loginPaths = ['/login', '/panel/login'];
       let loginSuccess = false;
       let lastLoginError = '';
@@ -92,14 +122,20 @@ class XuiClient {
           }
 
           if (res.data?.success) {
-            const cookiesHeader = res.headers['set-cookie'] || res.headers['Set-Cookie'];
+            loginSuccess = true;
+            // Extract the set-cookie header robustly case-insensitively
+            const keys = Object.keys(res.headers);
+            const cookieKey = keys.find(k => k.toLowerCase() === 'set-cookie');
+            const cookiesHeader = cookieKey ? res.headers[cookieKey] : undefined;
+            
             if (cookiesHeader) {
                 const cookies = Array.isArray(cookiesHeader) ? cookiesHeader : [cookiesHeader];
                 this.cookie = cookies.map(c => c.split(';')[0]).join('; ');
-                loginSuccess = true;
-                console.log(`[X-UI Success] Logged in via ${loginPath}`);
-                break;
+                console.log(`[X-UI Success] Logged in with session cookie via ${loginPath}`);
+            } else {
+                console.log(`[X-UI Success] Logged in via ${loginPath} but no set-cookie header found.`);
             }
+            break;
           }
           lastLoginError = res.data?.msg || 'نام کاربری یا رمز عبور اشتباه است.';
         } catch (e: any) {
@@ -142,6 +178,11 @@ class XuiClient {
           });
           
           if (res.data?.success || (res.status === 200 && Array.isArray(res.data?.obj))) {
+            const idx = path.indexOf('/inbounds/list');
+            if (idx !== -1) {
+              this.workingApiPrefix = path.substring(0, idx);
+              console.log(`[X-UI] Connection test successful. Cached working API prefix: ${this.workingApiPrefix}`);
+            }
             return { 
               success: true, 
               message: `اتصال برقرار شد. مسیر معتبر: ${path}`,
@@ -165,7 +206,9 @@ class XuiClient {
     try {
       const state = db.getState();
       const panel = state.panel;
-      if (!panel.url || (!panel.apiKey && (!panel.username || !panel.password))) {
+      const hasApiKey = panel.apiKey && panel.apiKey.trim() !== '';
+      const hasUserPass = (panel.username && panel.username.trim() !== '') && (panel.password && panel.password.trim() !== '');
+      if (!panel.url || (!hasApiKey && !hasUserPass)) {
         return [];
       }
 
@@ -184,6 +227,11 @@ class XuiClient {
             validateStatus: () => true
           });
           if (res.data?.success || (res.status === 200 && Array.isArray(res.data?.obj))) {
+            const idx = path.indexOf('/inbounds/list');
+            if (idx !== -1) {
+              this.workingApiPrefix = path.substring(0, idx);
+              console.log(`[X-UI] Successfully fetched inbounds. Cached working API prefix: ${this.workingApiPrefix}`);
+            }
             return res.data.obj || [];
           }
         } catch (e) {
@@ -202,13 +250,31 @@ class XuiClient {
       const opts = await this.getAuthOptions();
       console.log(`[X-UI] Deleting client ${clientUuid} from inbound ${inboundId}`);
       
-      // Try MHSanaei/franz standard format: /panel/api/inbounds/delClient/{clientUuid}
-      let res = await this.client.post(`${opts.baseURL}/panel/api/inbounds/delClient/${clientUuid}`, {}, {
+      const workingPrefix = this.workingApiPrefix || '/panel/api';
+      
+      // 1. Try using the successful workingPrefix
+      let res = await this.client.post(`${opts.baseURL}${workingPrefix}/inbounds/delClient/${clientUuid}`, {}, {
         headers: opts.headers,
         validateStatus: () => true
       });
       
-      // Fallback: Try /panel/api/inbounds/{inboundId}/delClient/{clientUuid}
+      // 2. Try with workingPrefix and inbound ID
+      if (!res.data || !res.data.success) {
+        res = await this.client.post(`${opts.baseURL}${workingPrefix}/inbounds/delClient/${inboundId}/${clientUuid}`, {}, {
+          headers: opts.headers,
+          validateStatus: () => true
+        });
+      }
+      
+      // 3. Static fallback: /panel/api/inbounds/delClient/
+      if (!res.data || !res.data.success) {
+        res = await this.client.post(`${opts.baseURL}/panel/api/inbounds/delClient/${clientUuid}`, {}, {
+          headers: opts.headers,
+          validateStatus: () => true
+        });
+      }
+
+      // 4. Static fallback with inbound ID: /panel/api/inbounds/delClient/inboundId/clientUuid
       if (!res.data || !res.data.success) {
         res = await this.client.post(`${opts.baseURL}/panel/api/inbounds/delClient/${inboundId}/${clientUuid}`, {}, {
           headers: opts.headers,
@@ -326,7 +392,19 @@ class XuiClient {
       console.log(`[X-UI Debug] Final Primary Inbound ID: ${primaryInboundId}`);
       console.log(`[X-UI Debug] Payload being sent:`, JSON.stringify(settings));
       
+      const workingPrefix = this.workingApiPrefix || '/panel/api';
+      
       const possibleUrls = [
+        // 1. Dynamic endpoints matching the verified successful prefix of this panel
+        `${opts.baseURL}${workingPrefix}/inbounds/addClient`,
+        `${opts.baseURL}${workingPrefix}/inbounds/addclient`,
+        `${opts.baseURL}${workingPrefix}/inbound/addClient`,
+        `${opts.baseURL}${workingPrefix}/inbound/addclient`,
+        `${opts.baseURL}${workingPrefix}/inbounds/client/add`,
+        `${opts.baseURL}${workingPrefix}/inbound/client/add`,
+        `${opts.baseURL}${workingPrefix}/client/add`,
+
+        // 2. Standard static fallback endpoints
         `${opts.baseURL}/panel/api/inbounds/addClient`,
         `${opts.baseURL}/panel/api/inbounds/addclient`,
         `${opts.baseURL}/api/inbounds/addClient`,
@@ -338,7 +416,8 @@ class XuiClient {
         `${opts.baseURL}/panel/inbounds/addclient`,
         `${opts.baseURL}/panel/inbound/addclient`,
         `${opts.baseURL}/api/inbound/addclient`,
-        `${opts.baseURL}/api/inbounds/client/add`,
+        `${opts.baseURL}/xui/api/inbounds/addClient`,
+        `${opts.baseURL}/xui/api/inbounds/addclient`,
       ];
 
       let lastResponse: any = null;
