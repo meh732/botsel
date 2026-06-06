@@ -290,52 +290,75 @@ class XuiClient {
     }
   }
 
-  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: number | number[], limitIp: number = 0, telegramId?: string) {
+  public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: string | number | (string | number)[], limitIp: number = 0, telegramId?: string) {
     const state = db.getState();
-    let finalInboundIds: number[] = [];
+    let rawTargets: (string | number)[] = [];
 
     if (Array.isArray(targetInboundIds) && targetInboundIds.length > 0) {
-      finalInboundIds = targetInboundIds;
-      console.log(`[X-UI] Target Inbound IDs: ${JSON.stringify(finalInboundIds)}`);
-    } else if (typeof targetInboundIds === 'number' && !isNaN(targetInboundIds)) {
-      finalInboundIds = [targetInboundIds];
-    } else if (typeof targetInboundIds === 'string' && targetInboundIds) {
-      const parsed = parseInt(targetInboundIds);
-      if (!isNaN(parsed)) finalInboundIds = [parsed];
-    }
-
-    if (finalInboundIds.length === 0) {
+      rawTargets = targetInboundIds;
+      console.log(`[X-UI] Target Inbound IDs requested: ${JSON.stringify(rawTargets)}`);
+    } else if (targetInboundIds !== undefined && targetInboundIds !== null && targetInboundIds !== '') {
+      rawTargets = [targetInboundIds as any];
+    } else {
+      // Fallback to saved panel state inbounds
       if (state.panel.inboundIds && state.panel.inboundIds.length > 0) {
-        finalInboundIds = state.panel.inboundIds.map(id => Number(id)).filter(id => !isNaN(id));
+        rawTargets = state.panel.inboundIds;
       } else if (state.panel.inboundId) {
-        const id = Number(state.panel.inboundId);
-        if (!isNaN(id)) finalInboundIds = [id];
+        rawTargets = [state.panel.inboundId];
       }
     }
 
-    if (finalInboundIds.length === 0) {
-      throw new Error('هیچ شناسه اینباندی (Inbound ID) تعریف نشده است. لطفا در لیست محصولات یا تنظیمات پنل چک کنید.');
-    }
-
-    const primaryInboundId = Number(finalInboundIds[0]);
-    if (isNaN(primaryInboundId)) {
-        throw new Error('شناسه اینباند (Inbound ID) نامعتبر است. باید یک عدد باشد.');
+    if (rawTargets.length === 0) {
+      throw new Error('هیچ شناسه، نام، یا پورتی برای اینباند (Inbound ID) تعریف نشده است. لطفا در محصولات یا تنظیمات پنل چک نمایید.');
     }
 
     try {
       const opts = await this.getAuthOptions();
       
-      // Fetch inbounds once for tags and duplicate scanning
+      // Fetch live inbounds from the panel to resolve tags, remarks, and ports dynamically
       const inboundsList: any[] = await this.getInbounds() || [];
+      
+      let resolvedInboundIds: number[] = [];
 
-      // A key precheck: confirm if the selected primaryInboundId exists in their panel!
-      if (inboundsList && inboundsList.length > 0) {
-        const inboundExists = inboundsList.some(ib => Number(ib.id) === Number(primaryInboundId));
-        if (!inboundExists) {
-          const availableIds = inboundsList.map(ib => ib.id).join(', ');
-          throw new Error(`مشترک در اینباند با شناسه (${primaryInboundId}) یافت نشد. شناسه‌های فعال یافت شده در پنل شما: [${availableIds}]. لطفا محصولات یا تنظیمات ربات را ویرایش کرده و شناسه پورت صحیح را ذخیره نمایید.`);
+      for (const target of rawTargets) {
+        if (target === undefined || target === null || target === '') continue;
+        
+        const targetStr = String(target).trim().toLowerCase();
+        const targetNum = Number(target);
+
+        // Let's search inside the live inbounds list for a robust match (by ID, Remark/Name, Tag, or Port)
+        let matchedInbound = inboundsList.find(ib => {
+          return (
+            (!isNaN(targetNum) && Number(ib.id) === targetNum) ||
+            (ib.remark && String(ib.remark).trim().toLowerCase() === targetStr) ||
+            (ib.tag && String(ib.tag).trim().toLowerCase() === targetStr) ||
+            (ib.port && String(ib.port).trim() === targetStr)
+          );
+        });
+
+        if (matchedInbound) {
+          resolvedInboundIds.push(Number(matchedInbound.id));
+        } else {
+          // Fall back to target value if it represents a direct numeric ID
+          if (!isNaN(targetNum)) {
+            resolvedInboundIds.push(targetNum);
+          }
         }
       }
+
+      // De-duplicate resolved IDs
+      resolvedInboundIds = Array.from(new Set(resolvedInboundIds));
+
+      if (resolvedInboundIds.length === 0) {
+        const availableInboundsInfo = inboundsList
+          .map(ib => `[ID: ${ib.id}, Remark: ${ib.remark || 'ندارد'}, Port: ${ib.port}, Protocol: ${ib.protocol}]`)
+          .join('\n');
+          
+        throw new Error(`مشخصات اینباند با برچسب یا شناسه (${rawTargets.join(', ')}) در پنل شما پیدا نشد. اینباندهای فعال در پنل شما:\n\n${availableInboundsInfo || 'هیچ اینباندی یافت نشد.'}\n\nلطفا نام، پورت، یا شناسه وارد شده را در بخش محصولات یا تنظیمات روبات بررسی کرده و تصحیح نمایید.`);
+      }
+
+      const primaryInboundId = resolvedInboundIds[0];
+      const finalInboundIds = resolvedInboundIds;
 
       // 1. Scan and delete existing client with the same email in ALL discovered inbounds to prevent duplication
       if (inboundsList && inboundsList.length > 0) {

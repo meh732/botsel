@@ -9,6 +9,24 @@ import { initBot, sendBroadcast } from "./server/bot.js";
 import { xui } from "./server/xui.js";
 import { encryptData, decryptData } from "./server/crypto.js";
 
+// Helpers to parse inbound IDs dynamically (supports string tags like "d1" or numbers like 1)
+function parseInboundId(val: any): string | number | undefined {
+  if (val === undefined || val === null || val === '') return undefined;
+  const num = Number(val);
+  return isNaN(num) ? String(val).trim() : num;
+}
+
+function parseInboundIds(vals: any): (string | number)[] {
+  if (!Array.isArray(vals)) return [];
+  return vals
+    .map(val => {
+      if (val === undefined || val === null || val === '') return null;
+      const num = Number(val);
+      return isNaN(num) ? String(val).trim() : num;
+    })
+    .filter((val): val is string | number => val !== null && val !== '');
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -64,12 +82,10 @@ async function startServer() {
     if (supportUsername !== undefined) updates.supportUsername = supportUsername;
     if (coupons !== undefined) updates.coupons = coupons;
     if (freeTestInboundId !== undefined) {
-      updates.freeTestInboundId = freeTestInboundId ? parseInt(freeTestInboundId) : undefined;
+      updates.freeTestInboundId = parseInboundId(freeTestInboundId);
     }
     if (freeTestInboundIds !== undefined) {
-      updates.freeTestInboundIds = Array.isArray(freeTestInboundIds)
-        ? freeTestInboundIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
-        : [];
+      updates.freeTestInboundIds = parseInboundIds(freeTestInboundIds);
     }
 
     if (adminIds !== undefined) {
@@ -96,11 +112,9 @@ async function startServer() {
     if (url !== undefined) newPanel.url = url;
     if (username !== undefined) newPanel.username = username;
     if (password && password !== '********') newPanel.password = password;
-    if (inboundId !== undefined) newPanel.inboundId = parseInt(inboundId) || undefined;
+    if (inboundId !== undefined) newPanel.inboundId = parseInboundId(inboundId);
     if (inboundIds !== undefined) {
-      newPanel.inboundIds = Array.isArray(inboundIds)
-        ? inboundIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
-        : [];
+      newPanel.inboundIds = parseInboundIds(inboundIds);
     }
     if (apiKey !== undefined) newPanel.apiKey = apiKey;
 
@@ -211,7 +225,7 @@ async function startServer() {
     }
 
     if (product.inboundId !== undefined) {
-      product.inboundId = product.inboundId ? parseInt(product.inboundId) : undefined;
+      product.inboundId = parseInboundId(product.inboundId);
     }
 
     if (product.limitIp !== undefined) {
@@ -219,9 +233,7 @@ async function startServer() {
     }
 
     if (product.inboundIds !== undefined) {
-      product.inboundIds = Array.isArray(product.inboundIds)
-        ? product.inboundIds.map((id: any) => parseInt(id)).filter((id: number) => !isNaN(id))
-        : [];
+      product.inboundIds = parseInboundIds(product.inboundIds);
     }
 
     const state = db.getState();

@@ -5,8 +5,8 @@ export interface PanelConfig {
   url?: string;
   username?: string;
   password?: string;
-  inboundId?: number;
-  inboundIds?: number[];
+  inboundId?: number | string;
+  inboundIds?: (number | string)[];
   apiKey?: string;
 }
 
@@ -16,8 +16,8 @@ export interface Product {
   price: number; // in Toman
   volumeGb: number; // Gigabytes
   durationDays: number;
-  inboundId?: number;
-  inboundIds?: number[];
+  inboundId?: number | string;
+  inboundIds?: (number | string)[];
   limitIp?: number;
 }
 
@@ -58,8 +58,8 @@ export interface AppState {
   freeTestVolumeGb: number;
   freeTestDurationDays: number;
   freeTestEnabled: boolean;
-  freeTestInboundId?: number;
-  freeTestInboundIds?: number[];
+  freeTestInboundId?: number | string;
+  freeTestInboundIds?: (number | string)[];
   adminIds: number[];
   referralRewardToman: number;
   cardNumber?: string;
