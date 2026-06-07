@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload, Zap, CheckCircle, Percent, X } from 'lucide-react';
+import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload, Zap, CheckCircle, Percent, X, Edit2 } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'settings' | 'products' | 'users' | 'sellers'>('settings');
@@ -943,6 +943,7 @@ function ProductsView() {
   const [inbounds, setInbounds] = useState<any[]>([]);
   const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[], limitIp: 1, categoryId: '' });
   const [newCatName, setNewCatName] = useState('');
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/state')
@@ -986,6 +987,7 @@ function ProductsView() {
   const addProduct = async () => {
     const payload = {
       ...form,
+      id: editingProductId || undefined,
       inboundId: form.inboundId ? parseInt(form.inboundId) : undefined,
       inboundIds: form.inboundIds,
       categoryId: form.categoryId || undefined
@@ -998,9 +1000,27 @@ function ProductsView() {
     const data = await res.json();
     if (data.success) {
       setProducts(data.products);
-      // Reset form
-      setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1, categoryId: form.categoryId });
+      cancelEdit();
     }
+  };
+
+  const startEditProduct = (p: any) => {
+    setEditingProductId(p.id);
+    setForm({
+      name: p.name || '',
+      price: p.price || 0,
+      volumeGb: p.volumeGb !== undefined ? p.volumeGb : 10,
+      durationDays: p.durationDays !== undefined ? p.durationDays : 30,
+      inboundId: p.inboundId ? String(p.inboundId) : '',
+      inboundIds: p.inboundIds || [],
+      limitIp: p.limitIp !== undefined ? p.limitIp : 1,
+      categoryId: p.categoryId || ''
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingProductId(null);
+    setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1, categoryId: '' });
   };
 
   const deleteProduct = async (id: string) => {
@@ -1038,7 +1058,7 @@ function ProductsView() {
        </div>
 
        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
-         <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> تعریف پکیج و محصول جدید با اینباندهای انتخابی</h2>
+         <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> {editingProductId ? 'ویرایش و اصلاح جزئیات محصول انتخابی' : 'تعریف پکیج و محصول جدید با اینباندهای انتخابی'}</h2>
          
          <div className="space-y-4">
            {/* Row 1 fields */}
@@ -1133,7 +1153,14 @@ function ProductsView() {
 
          <p className="text-xs text-slate-400 mt-3.5">💡 سیستم هوشمند موازنه بار: با انتخاب چند اینباند، ربات به طور خودکار به صورت چرخشی (Round-Robin رندم) کلاینت‌های جدید با پروتکل متناظر را روی این اینباندها تقسیم می‌کند تا لود روی سرورها یکنواخت گردد.</p>
          <div className="mt-4 text-left">
-            <button onClick={addProduct} className="bg-indigo-600 text-white px-5 py-2 rounded-md hover:bg-indigo-700 font-semibold text-sm transition">ثبت و افزودن محصول</button>
+            <button onClick={addProduct} className={`${editingProductId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'} text-white px-5 py-2 rounded-md font-semibold text-sm transition`}>
+               {editingProductId ? 'ذخیره تغییرات محصول' : 'ثبت و افزودن محصول'}
+             </button>
+             {editingProductId && (
+               <button onClick={cancelEdit} className="bg-slate-100 text-slate-700 hover:bg-slate-200 px-4 py-2 rounded-md font-semibold text-sm transition">
+                 انصراف از ویرایش
+               </button>
+             )}
          </div>
        </div>
 
@@ -1160,7 +1187,15 @@ function ProductsView() {
                    </span>
                  </div>
                </div>
-               <button onClick={() => deleteProduct(p.id)} className="w-full py-2 flex items-center justify-center gap-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition font-medium text-sm">
+               <div className="flex gap-2 w-full mt-2">
+                  <button onClick={() => startEditProduct(p)} className="flex-1 py-1.5 flex items-center justify-center gap-1 text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition font-medium text-xs">
+                    <Edit2 className="w-3.5 h-3.5" /> <span>ویرایش پکیج</span>
+                  </button>
+                  <button onClick={() => deleteProduct(p.id)} className="flex-1 py-1.5 flex items-center justify-center gap-1 text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md transition font-medium text-xs">
+                    <Trash2 className="w-3.5 h-3.5" /> <span>حذف پکیج</span>
+                  </button>
+                </div>
+                <button style={{ display: 'none' }} className="hidden">
                  <Trash2 className="w-4 h-4" /> <span>حذف محصول</span>
                </button>
             </div>
