@@ -70,6 +70,8 @@ export interface AppState {
   cardHolder?: string;
   supportUsername?: string;
   coupons: Coupon[];
+  autoBackupIntervalHours?: number;
+  lastAutoBackupSent?: number;
 }
 
 const DB_PATH = path.join(process.cwd(), 'db.json');

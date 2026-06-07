@@ -309,6 +309,173 @@ class XuiClient {
     }
   }
 
+  public async renewClient(email: string, volumeGb: number, durationDays: number) {
+    try {
+      const opts = await this.getAuthOptions();
+      const state = db.getState();
+      const inboundsList = await this.getInbounds();
+      
+      let targetClient: any = null;
+      let targetInboundIds: number[] = [];
+      let originalLimitIp = 0;
+      let originalTelegramId = "";
+      let originalGroup = "";
+      
+      for (const inbound of inboundsList) {
+        if (inbound.settings) {
+          const parsed = typeof inbound.settings === 'string' ? JSON.parse(inbound.settings) : inbound.settings;
+          if (parsed && parsed.clients) {
+            const found = parsed.clients.find((c: any) => c.email === email);
+            if (found) {
+              if (!targetClient) targetClient = found;
+              targetInboundIds.push(inbound.id);
+              if (found.limitIp) originalLimitIp = found.limitIp;
+              if (found.tgId) originalTelegramId = found.tgId;
+              if (found.group) originalGroup = found.group;
+            }
+          }
+        }
+      }
+      
+      if (!targetClient) {
+        throw new Error(`کاربری با ایمیل ${email} در پنل یافت نشد.`);
+      }
+
+      console.log(`[X-UI] Renewing client ${email}. Deleting existing...`);
+      // Delete old client first
+      await this.delClientByEmail(email);
+      for (const ibId of targetInboundIds) {
+        await this.delClient(ibId, targetClient.id || targetClient.password);
+      }
+      
+      // Calculate new props
+      const expiryTime = durationDays > 0 ? Date.now() + durationDays * 24 * 60 * 60 * 1000 : 0;
+      const totalBytes = volumeGb > 0 ? Math.floor(volumeGb * 1024 * 1024 * 1024) : 0;
+      
+      const clientId = targetClient.id || targetClient.password;
+      const subId = targetClient.subId || uuidv4().replace(/-/g, '').substring(0, 16);
+
+      // Reconstruct Multi-Inbound Tags from targetInboundIds if needed
+      const otherTags: string[] = [];
+      if (targetInboundIds.length > 1 && inboundsList.length > 0) {
+        targetInboundIds.slice(1).forEach(id => {
+          const found = inboundsList.find(ib => Number(ib.id) === Number(id));
+          if (found && found.remark) {
+            otherTags.push(found.remark);
+          }
+        });
+      }
+
+      const clientObj: any = {
+        id: clientId,
+        password: clientId,
+        email: email,
+        enable: true,
+        expiryTime: expiryTime,
+        total: totalBytes,
+        totalGB: totalBytes,
+        limitIp: Number(originalLimitIp) || 0,
+        flow: targetClient.flow || "",
+        tgId: originalTelegramId || "",
+        subId: subId,
+        group: originalGroup || ""
+      };
+
+      if (otherTags.length > 0) {
+        clientObj.inboundTags = otherTags;
+      }
+
+      const settings = {
+        clients: [clientObj]
+      };
+
+      let isSuccess = false;
+      let lastError = null;
+      let lastResponse = null;
+      let non404Response = null;
+      const primaryInboundId = targetInboundIds[0];
+      const workingPrefix = this.workingApiPrefix || '/panel/api';
+
+      try {
+        const url = `${opts.baseURL}${workingPrefix}/inbounds/addClient`;
+        let res = await this.client.post(url, { id: Number(primaryInboundId), settings: JSON.stringify(settings) }, {
+             headers: { ...opts.headers, 'Content-Type': 'application/json' },
+             validateStatus: () => true
+        });
+        lastResponse = res;
+        if (res?.status && res.status !== 404) non404Response = res;
+        if (res?.data?.success) isSuccess = true;
+
+        if (!isSuccess) {
+           res = await this.client.post(url, { id: Number(primaryInboundId), settings: settings }, {
+               headers: { ...opts.headers, 'Content-Type': 'application/json' },
+               validateStatus: () => true
+           });
+           lastResponse = res;
+           if (res?.status && res.status !== 404) non404Response = res;
+           if (res?.data?.success) isSuccess = true;
+        }
+      } catch (err: any) { lastError = err; }
+      
+      // Legacy URL fallbacks if needed...
+      if (!isSuccess) {
+         const possibleUrls = [
+           `${opts.baseURL}/panel/api/inbounds/addClient`,
+           `${opts.baseURL}/api/inbounds/addClient`,
+           `${opts.baseURL}/panel/inbounds/addclient`
+         ];
+         for (const url of possibleUrls) {
+           try {
+             let res = await this.client.post(url, { id: Number(primaryInboundId), settings: JSON.stringify(settings) }, {
+               headers: { ...opts.headers, 'Content-Type': 'application/json' },
+               validateStatus: () => true
+             });
+             lastResponse = res;
+             if (res?.status && res.status !== 404) non404Response = res;
+             if (res?.data?.success) { isSuccess = true; break; }
+             
+             res = await this.client.post(url, { id: Number(primaryInboundId), settings: settings }, {
+               headers: { ...opts.headers, 'Content-Type': 'application/json' },
+               validateStatus: () => true
+             });
+             lastResponse = res;
+             if (res?.status && res.status !== 404) non404Response = res;
+             if (res?.data?.success) { isSuccess = true; break; }
+           } catch(e:any) { lastError = e; }
+         }
+      }
+
+      if (!isSuccess) {
+        const responseToUse = non404Response || lastResponse;
+        let errorMsg = responseToUse?.data?.msg || lastError?.message || 'پنل پاسخ ناموفق در ثبت مجدد مشتری بازگرداند.';
+        throw new Error(errorMsg);
+      }
+
+      const domain = new URL(state.panel.url).hostname;
+      let subUrlStr;
+      if (state.panel.subUrlBase && state.panel.subUrlBase.trim() !== '') {
+        let base = state.panel.subUrlBase.trim();
+        if (!base.endsWith('/')) {
+          base += '/';
+        }
+        subUrlStr = `${base}${subId}`;
+      } else {
+        const panelPortMatch = state.panel.url.match(/:(\d+)$/);
+        const panelPort = panelPortMatch ? panelPortMatch[1] : (state.panel.url.startsWith('https') ? '443' : '80');
+        subUrlStr = `http://${domain}:${panelPort}/sub/${subId}`;
+      }
+
+      return {
+        subUrl: subUrlStr,
+        email: email,
+        id: clientId
+      };
+    } catch (e: any) {
+      console.error('[X-UI] addClient Error:', e.message);
+      throw e;
+    }
+  }
+
   public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: string | number | (string | number)[], limitIp: number = 0, telegramId?: string, group?: string) {
     const state = db.getState();
     let rawTargets: (string | number)[] = [];

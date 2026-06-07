@@ -68,6 +68,21 @@ async function sendServiceInfo(chatId: number, purchase: any) {
       await bot.sendMessage(chatId, configsText, { parse_mode: 'Markdown' });
     }
 
+    if (purchase.price > 0 && purchase.volumeGb > 0 && purchase.durationDays > 0) {
+      await bot.sendMessage(chatId, `♻️ *تمدید سرویس*\n\nشما می‌توانید این سرویس را دقیقاً با همین تنظیمات تمدید کنید.\n\n` + 
+        `🔸 حجم: ${purchase.volumeGb} گیگابایت\n` +
+        `🔸 زمان: ${purchase.durationDays} روز\n` +
+        `💰 هزینه تمدید: ${purchase.price.toLocaleString()} تومان\n\n` +
+        `⚠️ با تمدید سرویس، نیازی به وارد کردن کانفیگ جدید نیست و همان اشتراک قبلی شما شارژ می‌شود و قابل استفاده خواهد بود. مبلغ از موجودی (یا حساب دفتری همکار) کسر می‌گردد.`, {
+        parse_mode: 'Markdown',
+        reply_markup: {
+           inline_keyboard: [
+             [{ text: '♻️ تمدید سرویس (کسر از موجودی)', callback_data: `renew_service_${purchase.id}` }]
+           ]
+         }
+      });
+    }
+
   } catch (err) {
     bot.sendMessage(chatId, `❌ خطا در پردازش اطلاعات سرویس. ${purchase.subUrl}`);
   }
@@ -258,6 +273,7 @@ export async function initBot() {
           [{ text: '📢 ارسال پیام همگانی (برودکست)', callback_data: 'admin_broadcast' }],
           [{ text: '🎟 مدیریت کدهای تخفیف', callback_data: 'admin_coupons_menu' }],
           [{ text: '📞 تنظیم آیدی پشتیبانی', callback_data: 'admin_set_support_id' }],
+          [{ text: '⏳ تنظیمات بکاپ خودکار (ارسال زمانبندی شده)', callback_data: 'admin_auto_backup_menu' }],
           [{ text: '📥 تهیه بکاپ امن (رمزگذاری شده)', callback_data: 'admin_backup' }],
           [{ text: '📤 بازیابی اطلاعات (ری‌استور بکاپ)', callback_data: 'admin_restore_prompt' }]
         ]
@@ -1035,6 +1051,18 @@ export async function initBot() {
         return;
       }
 
+      if (sessionType === 'set_auto_backup_interval') {
+        const interval = parseInt(text.trim());
+        if (isNaN(interval) || interval < 0 || interval > 24) {
+          bot!.sendMessage(chatId, '❌ مقدار وارد شده نامعتبر است. لطفاً یک عدد بین 0 تا 24 وارد کنید.');
+        } else {
+          db.updateState({ autoBackupIntervalHours: interval, lastAutoBackupSent: 0 }); // reset counter so it evaluates fresh
+          bot!.sendMessage(chatId, `✅ زمان‌بندی پشتیبان‌گیری خودکار با موفقیت ${interval > 0 ? `روزی ${interval} ساعت یکبار` : 'غیرفعال'} تنظیم شد.`);
+        }
+        sendAdminMainMenu(chatId);
+        return;
+      }
+
       if (sessionType === 'get_backup_password') {
         const backupPassword = text.trim();
         bot!.sendMessage(chatId, '⏳ در حال ساخت فایل پشتیبان رمزگذاری شده...');
@@ -1489,6 +1517,18 @@ export async function initBot() {
       return;
     }
 
+    if (data === 'admin_auto_backup_menu') {
+      if (isAdmin) {
+        adminSession.set(chatId, 'set_auto_backup_interval');
+        const interval = state.autoBackupIntervalHours || 0;
+        let txt = `⏳ *تنظیمات زمان‌بندی بکاپ خودکار*\n\nوضعیت فعلی: ${interval > 0 ? `فعال (هر ${interval} ساعت)` : 'غیرفعال'}\n\n`;
+        txt += `لطفاً برای تنظیم زمان‌بندی جدید، یک عدد بین 1 تا 24 را بفرستید که نشان‌دهنده تعداد ساعت فاصله‌ی بین هر بکاپ است.\n\nبرای غیرفعال کردن بکاپ خودکار عدد 0 را ارسال کنید.`;
+        bot!.sendMessage(chatId, txt, { parse_mode: 'Markdown' });
+      }
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
     if (data === 'admin_backup') {
       if (isAdmin) {
         adminSession.set(chatId, 'get_backup_password');
@@ -1717,6 +1757,98 @@ export async function initBot() {
       return;
     }
 
+    if (data && data.startsWith('renew_service_')) {
+      bot!.answerCallbackQuery(query.id);
+      if (!user) return;
+      const purchaseId = data.replace('renew_service_', '');
+      const userPurchases = user.purchases || [];
+      const purchase = userPurchases.find((p: any) => p.id === purchaseId);
+
+      if (!purchase) {
+        bot!.sendMessage(chatId, '❌ سرویس مورد نظر یافت نشد.');
+        return;
+      }
+
+      const finalPrice = purchase.price;
+
+      if (!user.isSeller) {
+        if ((user.balance || 0) < finalPrice) {
+          bot!.sendMessage(chatId, `❌ موجودی شما برای تمدید این سرویس کافی نیست.\n\nقیمت: ${finalPrice.toLocaleString()} تومان\nموجودی شما: ${(user.balance || 0).toLocaleString()} تومان`, {
+            reply_markup: {
+              inline_keyboard: [[{ text: '💳 شارژ حساب (کارت به کارت)', callback_data: 'user_deposit_flow' }]]
+            }
+          });
+          return;
+        }
+      } else {
+        const debtLimit = user.debtLimit !== undefined ? user.debtLimit : 1000000;
+        if ((user.debt || 0) + finalPrice > debtLimit) {
+           bot!.sendMessage(chatId, `❌ سقف اعتبار شما برای ثبت فروش جدید کافی نیست.\n\nبدهی فعلی: ${(user.debt || 0).toLocaleString()} تومان\nسقف اعتبار: ${debtLimit.toLocaleString()} تومان`);
+           return;
+        }
+      }
+
+      bot!.sendMessage(chatId, '⏳ در حال تمدید سرویس در سرور... لطفا شکیبا باشید.');
+
+      try {
+        // Find email by subUrl logic OR store email in purchase (we didn't store email originally? let's extract it from xui matching or we can just try emailPrefix rule)
+        // Wait, if we don't have the exact email saved, how do we find the client? We need the exact email!
+        // We know email is usually constructed as:
+        // const cleanUsername = user.username ? user.username.trim().replace(/[^a-zA-Z0-9_]/g, '') : '';
+        // const emailPrefix = cleanUsername || String(chatId);
+        // But what if it's multiple? We didn't save email in purchase!
+        // Let's resolve email from the panel by matching subId!
+        
+        const inboundsList = await xui.getInbounds();
+        let targetEmail = "";
+        const expectedSubIdMatch = purchase.subUrl ? purchase.subUrl.substring(purchase.subUrl.lastIndexOf('/') + 1) : null;
+        
+        for (const inbound of inboundsList) {
+          if (inbound.settings) {
+            const parsed = typeof inbound.settings === 'string' ? JSON.parse(inbound.settings) : inbound.settings;
+            if (parsed && parsed.clients) {
+               const foundClient = parsed.clients.find((c: any) => c.subId === expectedSubIdMatch || (c.subId && purchase.subUrl && purchase.subUrl.includes(c.subId)));
+               if (foundClient) {
+                 targetEmail = foundClient.email;
+                 break;
+               }
+            }
+          }
+        }
+
+        if (!targetEmail) {
+          throw new Error('مشخصات کاربر در پنل اصلی یافت نشد. ممکن است اشتراک حذف شده باشد.');
+        }
+
+        await xui.renewClient(targetEmail, purchase.volumeGb, purchase.durationDays);
+
+        if (!user.isSeller) {
+          user.balance = (user.balance || 0) - finalPrice;
+        } else {
+          user.debt = (user.debt || 0) + finalPrice;
+          user.debtVolume = (user.debtVolume || 0) + Number(purchase.volumeGb);
+          user.totalSales = (user.totalSales || 0) + finalPrice;
+        }
+        
+        // Save the purchase update explicitly: update createdAt to now so logs show it as recent update
+        purchase.createdAt = new Date().toISOString();
+
+        db.saveUser(user);
+
+        let finalMsg = `✅ تمدید سرویس با موفقیت انجام شد!\n\n📦 ${purchase.name}\nحجم ریست شد و زمان تمدید گردید.\n\n`;
+        if (user.isSeller) {
+           finalMsg += `📉 بدهی جدید شما: ${(user.debt || 0).toLocaleString()} تومان\n`;
+        } else {
+           finalMsg += `💰 موجودی جدید: ${user.balance.toLocaleString()} تومان\n`;
+        }
+        bot!.sendMessage(chatId, finalMsg);
+
+      } catch (err: any) {
+        bot!.sendMessage(chatId, `❌ خطای تمدید: ${err.message}`);
+      }
+      return;
+    }
+
     // Capture text input requests
     const inputs = [
       'set_p_url', 'set_p_user', 'set_p_pass', 'set_p_apikey', 
@@ -1829,6 +1961,46 @@ export async function initBot() {
       return;
     }
   });
+
+  // Start auto-backup worker
+  setInterval(async () => {
+    try {
+      const state = db.getState();
+      const intervalHours = state.autoBackupIntervalHours || 0;
+      if (intervalHours > 0 && state.adminIds.length > 0) {
+        const lastSent = state.lastAutoBackupSent || 0;
+        const now = Date.now();
+        const intervalMs = intervalHours * 60 * 60 * 1000;
+        
+        if (now - lastSent >= intervalMs) {
+           // Time to send backup
+           const mainAdmin = state.adminIds[0]; // first admin
+           const rawData = fs.readFileSync(path.join(process.cwd(), 'db.json'), 'utf8');
+           // We will just send it directly without extra encryption since it's an auto-task
+           // Auto backups are sent unencrypted to the main admin directly for convenience
+           const backupFileName = `auto_backup_${Date.now()}.json`;
+           const backupPath = path.join(process.cwd(), backupFileName);
+           fs.writeFileSync(backupPath, rawData, 'utf8');
+           
+           if (bot) {
+             await bot.sendDocument(mainAdmin, backupPath, {
+               caption: `🔄 <b>بکاپ خودکار ربات</b>\n\n` +
+                        `این بکاپ طبق زمان‌بندی ${intervalHours} ساعته توسط سیستم ساخته و ارسال شده است.\n` +
+                        `برای تغییر زمان‌بندی از طریق منوی مدیریت بخش "تنظیمات بکاپ خودکار" اقدام نمایید.`,
+               parse_mode: 'HTML'
+             });
+             db.updateState({ lastAutoBackupSent: now });
+           }
+           
+           try {
+             fs.unlinkSync(backupPath); // clean up temp file
+           } catch (e) {}
+        }
+      }
+    } catch (e: any) {
+      console.error('[Backup Check Worker Error]', e.message);
+    }
+  }, 10 * 60 * 1000); // Check every 10 minutes
 }
 
 export async function sendBroadcast(message: string) {
