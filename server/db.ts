@@ -11,15 +11,27 @@ export interface PanelConfig {
   subUrlBase?: string;
 }
 
+export interface Category {
+  id: string;
+  name: string;
+}
+
 export interface Product {
   id: string;
   name: string;
   price: number; // in Toman
   volumeGb: number; // Gigabytes
   durationDays: number;
+  categoryId?: string;
   inboundId?: number | string;
   inboundIds?: (number | string)[];
   limitIp?: number;
+}
+
+export interface SellerDiscountRule {
+  type: 'global' | 'category' | 'product';
+  targetId?: string; // categoryId or productId (empty for global)
+  percent: number;
 }
 
 export interface Purchase {
@@ -42,6 +54,8 @@ export interface User {
   referredBy?: number;
   referralsMade?: number;
   isSeller?: boolean;
+  sellerDiscount?: number; // legacy global discount
+  sellerDiscounts?: SellerDiscountRule[];
   debt?: number;
   debtVolume?: number;
   debtLimit?: number;
@@ -57,6 +71,7 @@ export interface Coupon {
 export interface AppState {
   botToken?: string;
   panel: PanelConfig;
+  categories?: Category[];
   products: Product[];
   users: User[];
   freeTestVolumeGb: number;
@@ -71,6 +86,7 @@ export interface AppState {
   supportUsername?: string;
   coupons: Coupon[];
   autoBackupIntervalHours?: number;
+  autoBackupPassword?: string;
   lastAutoBackupSent?: number;
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload, Zap, CheckCircle } from 'lucide-react';
+import { Save, RefreshCw, Send, Plus, Trash2, BatteryCharging, Settings2, Users as UsersIcon, Box, Download, Upload, Zap, CheckCircle, Percent, X } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'settings' | 'products' | 'users' | 'sellers'>('settings');
@@ -303,7 +303,9 @@ function SettingsView() {
         cardNumber: state.cardNumber,
         cardHolder: state.cardHolder,
         adminIds: parsedAdminIds,
-        coupons: state.coupons || []
+        coupons: state.coupons || [],
+        autoBackupIntervalHours: state.autoBackupIntervalHours !== undefined ? Number(state.autoBackupIntervalHours) : 0,
+        autoBackupPassword: state.autoBackupPassword || ''
       })
     });
     const data = await res.json();
@@ -539,6 +541,16 @@ function SettingsView() {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">پاداش معرفی زیرمجموعه (تومان)</label>
               <input type="number" value={state.referralRewardToman || 0} onChange={e => setState({...state, referralRewardToman: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">بازه زمانی ارسال بکاپ خودکار (ساعت)</label>
+              <input type="number" value={state.autoBackupIntervalHours || 0} min="0" max="24" placeholder="مثلا 12 (صفر برای غیرفعال)" onChange={e => setState({...state, autoBackupIntervalHours: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 text-left font-mono" dir="ltr" />
+              <p className="text-[11px] text-slate-500 mt-1">تعداد ساعت بین هر ارسال بکاپ به تلگرام ادمین مشخص شده. ۰ = غیرفعال.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">رمز عبور فایل بکاپ خودکار</label>
+              <input type="text" value={state.autoBackupPassword || ''} placeholder="رمز بکاپ (خالی برای عدم رمزگذاری)" onChange={e => setState({...state, autoBackupPassword: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 text-left font-mono" dir="ltr" />
+              <p className="text-[11px] text-slate-500 mt-1">این پسورد برای رمزگذاری و محافظت از فایل‌های بکاپ ارسالی استفاده می‌شود.</p>
             </div>
           </div>
 
@@ -927,13 +939,18 @@ function SettingsView() {
 }
 function ProductsView() {
   const [products, setProducts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [inbounds, setInbounds] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[], limitIp: 1 });
+  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[], limitIp: 1, categoryId: '' });
+  const [newCatName, setNewCatName] = useState('');
 
   useEffect(() => {
     fetch('/api/state')
       .then(r => r.json())
-      .then(s => setProducts(s.products || []));
+      .then(s => {
+        setProducts(s.products || []);
+        setCategories(s.categories || []);
+      });
     
     // Fetch inbounds on load if available - don't log errors to main console
     fetch('/api/xui-inbounds')
@@ -946,11 +963,32 @@ function ProductsView() {
       .catch(() => {});
   }, []);
 
+  const addCategory = async () => {
+    if (!newCatName.trim()) return;
+    const res = await fetch('/api/categories', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name: newCatName.trim() })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setCategories(data.categories);
+      setNewCatName('');
+    }
+  };
+
+  const deleteCategory = async (id: string) => {
+    if(!confirm('آیا از حذف این دسته مطمئن هستید؟ (محصولات این دسته بدون دسته خواهند شد)')) return;
+    await fetch(`/api/categories/${id}`, { method: 'DELETE' });
+    setCategories(categories.filter(c => c.id !== id));
+  };
+
   const addProduct = async () => {
     const payload = {
       ...form,
       inboundId: form.inboundId ? parseInt(form.inboundId) : undefined,
-      inboundIds: form.inboundIds
+      inboundIds: form.inboundIds,
+      categoryId: form.categoryId || undefined
     };
     const res = await fetch('/api/products', {
       method: 'POST',
@@ -961,7 +999,7 @@ function ProductsView() {
     if (data.success) {
       setProducts(data.products);
       // Reset form
-      setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1 });
+      setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1, categoryId: form.categoryId });
     }
   };
 
@@ -973,12 +1011,45 @@ function ProductsView() {
 
   return (
     <div className="max-w-4xl mx-auto" dir="rtl">
+       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6">
+          <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Box className="w-5 h-5 text-indigo-600"/> مدیریت گروه‌ها (دسته‌بندی‌ها)</h2>
+          <div className="flex gap-2">
+            <input 
+              type="text" 
+              value={newCatName} 
+              onChange={e => setNewCatName(e.target.value)} 
+              placeholder="نام گروه (مثلا: سرورهای آلمان)"
+              className="flex-1 px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"
+            />
+            <button onClick={addCategory} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 font-semibold text-sm transition">ثبت گروه</button>
+          </div>
+          {categories.length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {categories.map(c => (
+                <div key={c.id} className="bg-slate-100 border border-slate-200 rounded-md px-3 py-1.5 flex items-center gap-2 text-sm text-slate-800">
+                  <span>{c.name}</span>
+                  <button onClick={() => deleteCategory(c.id)} className="text-red-500 hover:text-red-700 transition">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+       </div>
+
        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
          <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> تعریف پکیج و محصول جدید با اینباندهای انتخابی</h2>
          
          <div className="space-y-4">
            {/* Row 1 fields */}
-           <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+           <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+             <div className="md:col-span-2">
+               <label className="block text-xs font-semibold text-slate-700 mb-1">گروه محصول</label>
+               <select value={form.categoryId} onChange={e=>setForm({...form, categoryId: e.target.value})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm bg-white">
+                 <option value="">بدون گروه (نمایش در لیست اصلی)</option>
+                 {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+               </select>
+             </div>
              <div>
                <label className="block text-xs font-semibold text-slate-700 mb-1">نام محصول (پکیج)</label>
                <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="مثال: ۱ ماهه ۵۰ گیگابایت"/>
@@ -1070,6 +1141,11 @@ function ProductsView() {
           {products.map(p => (
             <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col hover:shadow-md transition">
                <h3 className="text-lg font-bold text-slate-900 mb-2">{p.name}</h3>
+               {p.categoryId && (
+                 <div className="text-xs text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-block w-fit mb-3">
+                   گروه: {categories.find(c => c.id === p.categoryId)?.name || 'نامشخص'}
+                 </div>
+               )}
                <div className="text-2xl font-black text-indigo-600 mb-4">{p.price.toLocaleString()} <span className="text-sm font-normal text-slate-500">تومان</span></div>
                <div className="space-y-2 mb-6 flex-1 text-sm text-slate-700">
                  <div className="flex justify-between border-b pb-1"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
@@ -1230,15 +1306,24 @@ function UsersView() {
 
 function SellersView() {
   const [users, setUsers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [newChatId, setNewChatId] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newLimit, setNewLimit] = useState('1000000');
   const [loading, setLoading] = useState(false);
+  
+  const [discountModalUser, setDiscountModalUser] = useState<any>(null);
+  const [editingDiscounts, setEditingDiscounts] = useState<any[]>([]);
 
   const fetchUsers = () => {
     fetch('/api/state')
       .then((r) => r.json())
-      .then((s) => setUsers(s.users || []));
+      .then((s) => {
+        setUsers(s.users || []);
+        setProducts(s.products || []);
+        setCategories(s.categories || []);
+      });
   };
 
   useEffect(() => {
@@ -1300,7 +1385,7 @@ function SellersView() {
     }
   };
 
-  const changeLimits = async (chatId: number, currentLimit?: number, currentVolumeGob?: number, currentDebt?: number) => {
+  const changeLimits = async (chatId: number, currentLimit?: number, currentVolumeGob?: number, currentDebt?: number, currentDiscount?: number) => {
     const limitPrompt = prompt(
       'سقف بدهی مجاز همکار را وارد کنید (تومان):',
       String(currentLimit || 1000000)
@@ -1334,6 +1419,17 @@ function SellersView() {
       return;
     }
 
+    const valDiscountPrompt = prompt(
+      'درصد تخفیف اختصاصی همکار (از 0 تا 100 وارد کنید):',
+      String(currentDiscount || 0)
+    );
+    if (valDiscountPrompt === null) return;
+    const newDiscountNum = Number(valDiscountPrompt);
+    if (isNaN(newDiscountNum) || newDiscountNum < 0 || newDiscountNum > 100) {
+      alert('درصد تخفیف باید عددی بین صفر تا 100 باشد.');
+      return;
+    }
+
     const res = await fetch(`/api/users/${chatId}/seller-limits`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1341,6 +1437,7 @@ function SellersView() {
         debtLimit: newLimitNum,
         debtVolume: newVolumeNum,
         debt: newDebtNum,
+        sellerDiscount: newDiscountNum,
       }),
     });
     const data = await res.json();
@@ -1353,6 +1450,7 @@ function SellersView() {
                 debtLimit: newLimitNum,
                 debtVolume: newVolumeNum,
                 debt: newDebtNum,
+                sellerDiscount: newDiscountNum,
               }
             : u
         )
@@ -1382,8 +1480,149 @@ function SellersView() {
     }
   };
 
+  const openDiscountModal = (user: any) => {
+    setDiscountModalUser(user);
+    setEditingDiscounts(user.sellerDiscounts || []);
+  };
+
+  const saveDiscounts = async () => {
+    if (!discountModalUser) return;
+    try {
+      const res = await fetch(`/api/users/${discountModalUser.chatId}/seller-limits`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sellerDiscounts: editingDiscounts,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUsers(
+          users.map((u) =>
+            u.chatId === discountModalUser.chatId
+              ? { ...u, sellerDiscounts: editingDiscounts }
+              : u
+          )
+        );
+        alert('تخفیف‌های پیشرفته با موفقیت ذخیره شد.');
+        setDiscountModalUser(null);
+      }
+    } catch (e: any) {
+      alert('خطا در ذخیره: ' + e.message);
+    }
+  };
+
+  const deleteRule = (index: number) => {
+    setEditingDiscounts(editingDiscounts.filter((_, i) => i !== index));
+  };
+  const addRule = (type: 'global' | 'category' | 'product') => {
+    setEditingDiscounts([...editingDiscounts, { type, targetId: '', percent: 0 }]);
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-6" dir="rtl">
+      {/* Discount Modal */}
+      {discountModalUser && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-2xl max-h-[90vh] flex flex-col">
+             <div className="flex justify-between items-center mb-4">
+               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                 <Percent className="w-5 h-5 text-indigo-600" />
+                 تخفیف‌های اختصاصی: {discountModalUser.username ? `@${discountModalUser.username}` : discountModalUser.chatId}
+               </h3>
+               <button onClick={() => setDiscountModalUser(null)} className="text-slate-500 hover:text-slate-800"><X className="w-5 h-5" /></button>
+             </div>
+             
+             <div className="overflow-y-auto flex-1 mb-4 space-y-3">
+                <p className="text-sm text-slate-600 mb-2 leading-relaxed">
+                  سیستم هوشمند تخفیف بدین صورت عمل می‌کند که برای هر خرید نماینده، <strong>بیشترین</strong> درصد تخفیف اختصاصی که مربوط به آن محصول یا گروهِ محصول است، اعمال می‌گردد. (مورد اولویت بالاتر دارد)
+                </p>
+                {editingDiscounts.map((rule, idx) => (
+                  <div key={idx} className="flex gap-2 items-center bg-slate-50 p-2 border border-slate-200 rounded-lg">
+                    <select 
+                      value={rule.type} 
+                      onChange={e => {
+                        const newRules = [...editingDiscounts];
+                        newRules[idx].type = e.target.value as 'global'|'category'|'product';
+                        newRules[idx].targetId = '';
+                        setEditingDiscounts(newRules);
+                      }}
+                      className="px-2 py-1.5 border rounded-md text-sm bg-white min-w-[120px]"
+                    >
+                      <option value="global">عمومی (همه)</option>
+                      <option value="category">یک گروه خاص</option>
+                      <option value="product">یک محصول خاص</option>
+                    </select>
+                    
+                    {rule.type === 'category' && (
+                      <select 
+                        value={rule.targetId || ''} 
+                        onChange={e => {
+                          const newRules = [...editingDiscounts];
+                          newRules[idx].targetId = e.target.value;
+                          setEditingDiscounts(newRules);
+                        }}
+                        className="flex-1 px-2 py-1.5 border rounded-md text-sm bg-white"
+                      >
+                         <option value="">انتخاب گروه...</option>
+                         {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    )}
+                    
+                    {rule.type === 'product' && (
+                      <select 
+                        value={rule.targetId || ''} 
+                        onChange={e => {
+                          const newRules = [...editingDiscounts];
+                          newRules[idx].targetId = e.target.value;
+                          setEditingDiscounts(newRules);
+                        }}
+                        className="flex-1 px-2 py-1.5 border rounded-md text-sm bg-white"
+                      >
+                         <option value="">انتخاب پکیج...</option>
+                         {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    )}
+                    
+                    {rule.type === 'global' && <div className="flex-1 text-xs text-slate-500 mr-2">شامل تمامی محصولات می‌گردد</div>}
+
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs text-slate-700 font-medium">درصد:</span>
+                      <input 
+                        type="number" min="0" max="100" 
+                        value={rule.percent} 
+                        onChange={e => {
+                          const newRules = [...editingDiscounts];
+                          newRules[idx].percent = Number(e.target.value);
+                          setEditingDiscounts(newRules);
+                        }}
+                        className="w-16 px-2 py-1.5 border rounded-md text-sm text-center focus:ring-2 focus:ring-indigo-500" 
+                      />
+                    </div>
+                    
+                    <button onClick={() => deleteRule(idx)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition mr-1">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                {editingDiscounts.length === 0 && <p className="text-sm text-slate-500 text-center py-4">بدون تخفیف اختصاصی.</p>}
+             </div>
+             
+             <div className="flex items-center gap-2 mb-4 border-t pt-4">
+                <span className="text-sm font-semibold text-slate-700">افزودن قانون تخفیف:</span>
+                <button onClick={() => addRule('global')} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md text-xs font-medium transition">عمومی (+)</button>
+                <button onClick={() => addRule('category')} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md text-xs font-medium transition">برای گروه خاص (+)</button>
+                <button onClick={() => addRule('product')} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md text-xs font-medium transition">برای محصول خاص (+)</button>
+             </div>
+             
+             <div className="flex gap-2 justify-end pt-2 border-t mt-auto">
+               <button onClick={() => setDiscountModalUser(null)} className="px-4 py-2 text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition font-medium text-sm">انصراف</button>
+               <button onClick={saveDiscounts} className="px-5 py-2 text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition font-semibold text-sm flex items-center gap-1.5"><Save className="w-4 h-4" /> ذخیره تخفیف‌ها</button>
+             </div>
+          </div>
+        </div>
+      )}
+
       {/* Introduction Banner */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
         <h3 className="text-lg font-bold text-slate-900 mb-2">👥 پنل اختصاصی مدیریت نمایندگان (همکاران فروشنده)</h3>
@@ -1485,6 +1724,9 @@ function SellersView() {
                     <div className="text-xs text-emerald-600 font-semibold mt-0.5">
                       اعتبار باقیمانده: <span className="font-mono">{remains.toLocaleString()}</span> تومان
                     </div>
+                    <div className="text-xs text-blue-600 font-semibold mt-0.5 bg-blue-50 px-1 py-0.5 rounded inline-block">
+                      تخفیف فروشنده: <span className="font-mono">{u.sellerDiscount || 0}%</span>
+                    </div>
                   </td>
                   <td className="px-6 py-4">
                     <div className="font-mono text-slate-800 font-bold text-sm">
@@ -1499,7 +1741,13 @@ function SellersView() {
                   </td>
                   <td className="px-6 py-4 text-left flex items-center justify-end gap-2 h-20">
                     <button
-                      onClick={() => changeLimits(u.chatId, u.debtLimit, u.debtVolume, u.debt)}
+                      onClick={() => openDiscountModal(u)}
+                      className="px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-md font-medium text-xs transition border border-indigo-100"
+                    >
+                      تخفیف‌های پیشرفته
+                    </button>
+                    <button
+                      onClick={() => changeLimits(u.chatId, u.debtLimit, u.debtVolume, u.debt, u.sellerDiscount)}
                       className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-md font-medium text-xs transition"
                     >
                       ویرایش سقف و بدهی

@@ -82,7 +82,9 @@ async function startServer() {
       cardNumber, 
       cardHolder, 
       supportUsername, 
-      coupons 
+      coupons,
+      autoBackupIntervalHours,
+      autoBackupPassword
     } = req.body;
     
     const updates: any = { 
@@ -97,6 +99,8 @@ async function startServer() {
     if (cardHolder !== undefined) updates.cardHolder = cardHolder;
     if (supportUsername !== undefined) updates.supportUsername = supportUsername;
     if (coupons !== undefined) updates.coupons = coupons;
+    if (autoBackupIntervalHours !== undefined) updates.autoBackupIntervalHours = Number(autoBackupIntervalHours);
+    if (autoBackupPassword !== undefined) updates.autoBackupPassword = autoBackupPassword;
     if (freeTestInboundId !== undefined) {
       updates.freeTestInboundId = parseInboundId(freeTestInboundId);
     }
@@ -354,6 +358,30 @@ async function startServer() {
     }
   });
 
+  api.post("/categories", (req, res) => {
+    const category = req.body;
+    if (!category.id) {
+      category.id = uuidv4();
+    }
+    const state = db.getState();
+    const existingIndex = (state.categories || []).findIndex(c => c.id === category.id);
+    const newCategories = [...(state.categories || [])];
+    if (existingIndex >= 0) {
+      newCategories[existingIndex] = category;
+    } else {
+      newCategories.push(category);
+    }
+    db.updateState({ categories: newCategories });
+    res.json({ success: true, categories: newCategories });
+  });
+
+  api.delete("/categories/:id", (req, res) => {
+    const state = db.getState();
+    const newCategories = (state.categories || []).filter(c => c.id !== req.params.id);
+    db.updateState({ categories: newCategories });
+    res.json({ success: true });
+  });
+
   api.post("/products", (req, res) => {
     const product = req.body;
     if (!product.id) {
@@ -427,13 +455,15 @@ async function startServer() {
   });
 
   api.post("/users/:chatId/seller-limits", (req, res) => {
-    const { debtLimit, debtVolume, debt } = req.body;
+    const { debtLimit, debtVolume, debt, sellerDiscount, sellerDiscounts } = req.body;
     const user = db.getUser(parseInt(req.params.chatId));
     if (!user) return res.status(404).json({ success: false, message: 'کاربر پیدا نشد' });
     
     if (debtLimit !== undefined) user.debtLimit = Number(debtLimit);
     if (debtVolume !== undefined) user.debtVolume = Number(debtVolume);
     if (debt !== undefined) user.debt = Number(debt);
+    if (sellerDiscount !== undefined) user.sellerDiscount = Number(sellerDiscount);
+    if (sellerDiscounts !== undefined) user.sellerDiscounts = sellerDiscounts;
     
     db.saveUser(user);
     res.json({ success: true, user });

@@ -176,8 +176,33 @@ export async function initBot() {
     const state = db.getState();
 
     let finalPrice = product.price;
-    if (discountPercent) {
-      finalPrice = Math.max(0, Math.round(product.price * (1 - discountPercent / 100)));
+    const baseDiscount = discountPercent || 0;
+    
+    let sellerDiscount = 0;
+    if (user.isSeller) {
+      if (user.sellerDiscounts && user.sellerDiscounts.length > 0) {
+        // Find best specific discount
+        const bestSpecific = user.sellerDiscounts
+          .filter(d => 
+            (d.type === 'product' && d.targetId === product.id) ||
+            (d.type === 'category' && d.targetId === product.categoryId) ||
+            (d.type === 'global')
+          )
+          .sort((a, b) => b.percent - a.percent)[0];
+          
+        if (bestSpecific) {
+          sellerDiscount = bestSpecific.percent;
+        }
+      } else if (user.sellerDiscount) {
+        sellerDiscount = user.sellerDiscount; // legacy global
+      }
+    }
+    
+    // Choose the maximum between coupon discount and seller discount
+    const effectiveDiscount = Math.max(baseDiscount, sellerDiscount);
+
+    if (effectiveDiscount > 0) {
+      finalPrice = Math.max(0, Math.round(product.price * (1 - effectiveDiscount / 100)));
     }
 
     if (user.isSeller) {
@@ -1055,9 +1080,28 @@ export async function initBot() {
         const interval = parseInt(text.trim());
         if (isNaN(interval) || interval < 0 || interval > 24) {
           bot!.sendMessage(chatId, '❌ مقدار وارد شده نامعتبر است. لطفاً یک عدد بین 0 تا 24 وارد کنید.');
+          sendAdminMainMenu(chatId);
         } else {
           db.updateState({ autoBackupIntervalHours: interval, lastAutoBackupSent: 0 }); // reset counter so it evaluates fresh
-          bot!.sendMessage(chatId, `✅ زمان‌بندی پشتیبان‌گیری خودکار با موفقیت ${interval > 0 ? `روزی ${interval} ساعت یکبار` : 'غیرفعال'} تنظیم شد.`);
+          if (interval > 0) {
+            adminSession.set(chatId, 'set_auto_backup_password');
+            bot!.sendMessage(chatId, `✅ زمان‌بندی پشتیبان‌گیری خودکار موفقیت‌آمیز بود (فاصله هر ${interval} ساعت).\n\n🔑 لطفاً یک رمز عبور جهت رمزگذاری فایل‌های بکاپ خودکار ارسال کنید:\n\n*(چنانچه مایلید بکاپ بدون رمز باشد عدد 0 را بفرستید)*`, { parse_mode: 'Markdown' });
+          } else {
+            bot!.sendMessage(chatId, `✅ پشتیبان‌گیری خودکار غیرفعال گردید.`);
+            sendAdminMainMenu(chatId);
+          }
+        }
+        return;
+      }
+
+      if (sessionType === 'set_auto_backup_password') {
+        const pass = text.trim();
+        if (pass === '0') {
+           db.updateState({ autoBackupPassword: '' });
+           bot!.sendMessage(chatId, `✅ بکاپ خودکار بدون رمز ذخیره خواهد شد.`);
+        } else {
+           db.updateState({ autoBackupPassword: pass });
+           bot!.sendMessage(chatId, `✅ رمز بکاپ خودکار با موفقیت تنظیم شد.`);
         }
         sendAdminMainMenu(chatId);
         return;
@@ -1256,6 +1300,22 @@ export async function initBot() {
         return;
       }
 
+      if (stateObj.categories && stateObj.categories.length > 0) {
+        const inlineKeyboard = stateObj.categories.map(c => ([
+          { text: `📁 ${c.name}`, callback_data: `show_category_seller_${c.id}` }
+        ]));
+        if (stateObj.products.some(p => !p.categoryId)) {
+          inlineKeyboard.push([{ text: `📁 سایر محصولات`, callback_data: `show_category_seller_uncategorized` }]);
+        }
+        bot!.sendMessage(chatId, '🛒 *خرید سرویس ویژه همکاران*\nلطفا دسته‌بندی محصول را انتخاب کنید:', {
+           parse_mode: 'Markdown',
+           reply_markup: {
+             inline_keyboard: inlineKeyboard
+           }
+        });
+        return;
+      }
+
       const inlineKeyboard = stateObj.products.map(p => ([
         { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
       ]));
@@ -1313,14 +1373,30 @@ export async function initBot() {
     }
 
     if (cleanText === 'خرید سرویس' || cleanText === 'خرید اکانت' || text.includes('خرید سرویس')) {
-      const state = db.getState();
-      if (state.products.length === 0) {
+      const stateObj = db.getState();
+      if (stateObj.products.length === 0) {
         bot!.sendMessage(chatId, '❌ هیچ محصولی موجود نیست.');
         return;
       }
 
-      const inlineKeyboard = state.products.map(p => ([
-        { text: `${p.name} - ${p.price} تومان`, callback_data: `buy_${p.id}` }
+      if (stateObj.categories && stateObj.categories.length > 0) {
+        const inlineKeyboard = stateObj.categories.map(c => ([
+          { text: `📁 ${c.name}`, callback_data: `show_category_${c.id}` }
+        ]));
+        if (stateObj.products.some(p => !p.categoryId)) {
+          inlineKeyboard.push([{ text: `📁 سایر محصولات`, callback_data: `show_category_uncategorized` }]);
+        }
+        bot!.sendMessage(chatId, '🛍 لطفا دسته‌بندی محصول را انتخاب کنید:', {
+           parse_mode: 'Markdown',
+           reply_markup: {
+             inline_keyboard: inlineKeyboard
+           }
+        });
+        return;
+      }
+
+      const inlineKeyboard = stateObj.products.map(p => ([
+        { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, '🛍 لطفا یک محصول انتخاب کنید:', {
@@ -1892,7 +1968,36 @@ export async function initBot() {
       return;
     }
 
-    if (data && data.startsWith('buy_')) {
+    if (data && data.startsWith('show_category_')) {
+      const isSeller = data.startsWith('show_category_seller_');
+      const categoryId = data.replace(isSeller ? 'show_category_seller_' : 'show_category_', '');
+      
+      const filteredProducts = state.products.filter(p => {
+        if (categoryId === 'uncategorized') return !p.categoryId;
+        return p.categoryId === categoryId;
+      });
+
+      if (filteredProducts.length === 0) {
+        bot!.sendMessage(chatId, '❌ هیچ محصولی در این دسته موجود نیست.');
+        bot!.answerCallbackQuery(query.id);
+        return;
+      }
+
+      const inlineKeyboard = filteredProducts.map(p => ([
+        { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
+      ]));
+
+      bot!.sendMessage(chatId, isSeller ? '🛒 *خرید سرویس ویژه همکاران*:\nلطفا یکی از پکیج‌های زیر را جهت ساخت اتوماتیک انتخاب کنید:' : '🛍 لطفا یک محصول انتخاب کنید:', {
+         parse_mode: 'Markdown',
+         reply_markup: {
+           inline_keyboard: inlineKeyboard
+         }
+      });
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data && data.startsWith('buy_') && !data.startsWith('buy_now_')) {
       const productId = data.replace('buy_', '');
       const product = state.products.find(p => p.id === productId);
 
@@ -1976,16 +2081,23 @@ export async function initBot() {
            // Time to send backup
            const mainAdmin = state.adminIds[0]; // first admin
            const rawData = fs.readFileSync(path.join(process.cwd(), 'db.json'), 'utf8');
-           // We will just send it directly without extra encryption since it's an auto-task
-           // Auto backups are sent unencrypted to the main admin directly for convenience
+           
+           let payload = rawData;
+           let isEncrypted = false;
+           if (state.autoBackupPassword && state.autoBackupPassword.trim() !== '') {
+             payload = encryptData(rawData, state.autoBackupPassword.trim());
+             isEncrypted = true;
+           }
+
            const backupFileName = `auto_backup_${Date.now()}.json`;
            const backupPath = path.join(process.cwd(), backupFileName);
-           fs.writeFileSync(backupPath, rawData, 'utf8');
+           fs.writeFileSync(backupPath, payload, 'utf8');
            
            if (bot) {
              await bot.sendDocument(mainAdmin, backupPath, {
                caption: `🔄 <b>بکاپ خودکار ربات</b>\n\n` +
                         `این بکاپ طبق زمان‌بندی ${intervalHours} ساعته توسط سیستم ساخته و ارسال شده است.\n` +
+                        (isEncrypted ? '🔒 این فایل با رمز عبور تعیین شده توسط شما رمزگذاری شده است. جهت استفاده در ری‌استور به آن نیاز خواهید داشت.\n' : '⚠️ این فایل رمزگذاری نشده است. برای امنیت بیشتر رمز بکاپ خودکار را تنظیم کنید.\n') +
                         `برای تغییر زمان‌بندی از طریق منوی مدیریت بخش "تنظیمات بکاپ خودکار" اقدام نمایید.`,
                parse_mode: 'HTML'
              });
