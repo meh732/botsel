@@ -39,7 +39,7 @@ A comprehensive solution to automate X-UI (Sanaei) VPN account distribution via 
 
 Use the automated one-line setup command on your fresh Linux VPS to download from your botsel repository:
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/meh732/botsel/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/meh732/botsel/main/install.sh)
 ```
 
 *(If you haven't uploaded this to GitHub yet, clone the repo manually, then run `sudo bash install.sh` inside the folder).*
