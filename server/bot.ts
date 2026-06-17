@@ -56,9 +56,14 @@ async function sendServiceInfo(chatId: number, purchase: any) {
       }
     }
 
+    const volumeText = purchase.isPayAsYouGo ? 'نامحدود (PAYG)' : `${purchase.volumeGb} GB`;
+    const durationText = purchase.isPayAsYouGo ? 'نامحدود' : `${purchase.durationDays} روز`;
+
     const caption = `🔑 *اطلاعات سرویس (${purchase.name})*\n\n` +
       `📑 *شماره سفارش*: \`${purchase.id}\`\n` +
-      `📦 *حجم*: ${purchase.volumeGb} GB | ⏳ *مدت*: ${purchase.durationDays} روز\n\n` +
+      `📦 *حجم*: ${volumeText} | ⏳ *مدت*: ${durationText}\n` +
+      (purchase.isPayAsYouGo ? `💸 *هزینه هر گیگ مصرف*: ${purchase.pricePerGb?.toLocaleString()} تومان\n` : '') +
+      (purchase.isPayAsYouGo ? `📊 *مصرف فعلی*: ${((purchase.lastUsedBytes || 0) / (1024*1024*1024)).toFixed(2)} گیگابایت\n\n` : '\n') +
       `🔗 *لینک اشتراک شما (سابسکریپشن)*:\n\`${purchase.subUrl}\`\n\n` +
       `✅ جهت استفاده، بارکد بالا را اسکن کنید و یا لینک فوق را کپی کرده و در نرم‌افزار ایمپورت نمایید. (سپس از منوی نرم‌افزار Update Subscription را بزنید)`;
 
@@ -236,8 +241,9 @@ export async function initBot() {
 
       const sellerGroupName = user.isSeller ? (user.nickname ? user.nickname : (user.username ? `${user.username}` : `Seller_${chatId}`)) : undefined;
       
-      const volGb = product.volumeGb !== undefined ? Number(product.volumeGb) : 0;
-      const durDays = product.durationDays !== undefined ? Number(product.durationDays) : 0;
+      const isPAYG = !!product.isPayAsYouGo;
+      const volGb = isPAYG ? 0 : (product.volumeGb !== undefined ? Number(product.volumeGb) : 0);
+      const durDays = isPAYG ? 0 : (product.durationDays !== undefined ? Number(product.durationDays) : 0);
 
       const cleanUsername = user.username ? user.username.trim().replace(/[^a-zA-Z0-9_]/g, '') : '';
       const emailPrefix = cleanUsername || String(chatId);
@@ -248,22 +254,29 @@ export async function initBot() {
       
       if (user.isSeller) {
         user.debt = (user.debt || 0) + finalPrice;
-        user.debtVolume = (user.debtVolume || 0) + Number(product.volumeGb || 0);
+        user.debtVolume = (user.debtVolume || 0) + (isPAYG ? 0 : Number(product.volumeGb || 0));
         user.totalSales = (user.totalSales || 0) + finalPrice;
       } else {
         user.balance -= finalPrice;
       }
       
       // Save purchase record
-      const newPurchase = {
-        id: `purch_${Date.now()}`,
+      const newPurchase: any = {
+        id: clientEmail, // use the email as id to trace back to xui client accurately
         name: product.name,
         price: finalPrice,
         subUrl: client.subUrl,
-        volumeGb: product.volumeGb,
-        durationDays: product.durationDays,
+        volumeGb: volGb,
+        durationDays: durDays,
         createdAt: new Date().toISOString()
       };
+
+      if (isPAYG) {
+        newPurchase.isPayAsYouGo = true;
+        newPurchase.pricePerGb = product.price; // or whatever represents the per Gb price
+        newPurchase.lastUsedBytes = 0;
+      }
+
       user.purchases = user.purchases || [];
       user.purchases.push(newPurchase);
 
@@ -526,10 +539,70 @@ export async function initBot() {
 
   bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
-    const text = msg.text;
+    const text = msg.text || '';
 
     const state = db.getState();
     const isAdmin = state.adminIds.includes(chatId);
+
+    // Filter for force join
+    if (!isAdmin && state.forceJoinEnabled && state.forceJoinChannels && state.forceJoinChannels.length > 0) {
+       let unjoinedChannels: any[] = [];
+       for (const channel of state.forceJoinChannels) {
+           if (!channel.id) continue;
+           try {
+              const member = await bot!.getChatMember(channel.id, chatId);
+              if (member.status === 'left' || member.status === 'kicked') {
+                 unjoinedChannels.push(channel);
+              }
+           } catch (e) {
+              // If bot is not admin in the channel or invalid id, we assume error and maybe skip or force.
+              // To prevent locking users if bot is removed, we'll assume they need to join if we can't check?
+              // Actually, if bot throws error, it's safer to just skip checking that channel.
+           }
+       }
+
+       if (unjoinedChannels.length > 0) {
+           if (text === '✅ عضو شدم') {
+               bot!.sendMessage(chatId, '❌ شما هنوز عضو کانال‌های زیر نشده‌اید. لطفاً ابتدا عضو شوید:', {
+                   reply_markup: {
+                       inline_keyboard: unjoinedChannels.map(c => [{ text: `عضویت در ${c.name}`, url: c.url }]),
+                   }
+               });
+               return;
+           }
+           
+           if (!text.startsWith('/start') && !text.startsWith('✅ عضو شدم')) {
+              const inlineKeyboard = unjoinedChannels.map(c => [{ text: `🔗 عضویت در کانال: ${c.name}`, url: c.url }]);
+              bot!.sendMessage(chatId, '⚠️ برای استفاده از ربات، لطفاً ابتدا در کانال(های) زیر عضو شوید:', {
+                 reply_markup: {
+                    inline_keyboard: inlineKeyboard,
+                    keyboard: [[{ text: '✅ عضو شدم' }]],
+                    resize_keyboard: true
+                 }
+              });
+              return;
+           }
+
+           if (text.startsWith('/start')) {
+              // Same prompt for /start
+              const inlineKeyboard = unjoinedChannels.map(c => [{ text: `🔗 عضویت در کانال: ${c.name}`, url: c.url }]);
+              bot!.sendMessage(chatId, '👋 خوش آمدید!\n⚠️ برای استفاده از ربات، لطفاً ابتدا در کانال(های) زیر عضو شوید:', {
+                 reply_markup: {
+                    inline_keyboard: inlineKeyboard,
+                    keyboard: [[{ text: '✅ عضو شدم' }]],
+                    resize_keyboard: true
+                 }
+              });
+              return;
+           }
+       } else if (text === '✅ عضو شدم') {
+           bot!.sendMessage(chatId, '✅ از عضویت شما سپاسگزاریم.\nاکنون می‌توانید از امکانات ربات استفاده کنید.', {
+              reply_markup: { remove_keyboard: true } // Then they will /start typically
+           });
+           bot!.sendMessage(chatId, 'لطفا /start را مجددا ارسال نمایید تا منو باز شود.');
+           return;
+       }
+    }
 
     // Process photo uploads for pending payment receipts FIRST
     if (msg.photo) {
@@ -994,6 +1067,7 @@ export async function initBot() {
         }
         targetUser.balance = (targetUser.balance || 0) + amount;
         db.saveUser(targetUser);
+        checkPaygReactivation(targetUser).catch(console.error);
         bot!.sendMessage(chatId, `✅ حساب کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به مقدار *${amount.toLocaleString()}* تومان شارژ دسترسی یافت.`, { parse_mode: 'Markdown' });
         bot!.sendMessage(targetUser.chatId, `🎉 حساب کاربری شما توسط مدیریت به مبلغ *${amount.toLocaleString()}* تومان شارژ شد!`, { parse_mode: 'Markdown' }).catch(() => {});
         sendUsersMenu(chatId);
@@ -1287,7 +1361,8 @@ export async function initBot() {
       if (!user || !user.isSeller) return;
       
       const stateObj = db.getState();
-      if (stateObj.products.length === 0) {
+      const activeProducts = stateObj.products.filter(p => !p.disabled);
+      if (activeProducts.length === 0) {
         bot!.sendMessage(chatId, '❌ هیچ محصولی موجود نیست.');
         return;
       }
@@ -1300,11 +1375,13 @@ export async function initBot() {
         return;
       }
 
-      if (stateObj.categories && stateObj.categories.length > 0) {
-        const inlineKeyboard = stateObj.categories.map(c => ([
+      const activeCategories = (stateObj.categories || []).filter(c => !c.disabled);
+
+      if (activeCategories.length > 0) {
+        const inlineKeyboard = activeCategories.map(c => ([
           { text: `📁 ${c.name}`, callback_data: `show_category_seller_${c.id}` }
         ]));
-        if (stateObj.products.some(p => !p.categoryId)) {
+        if (activeProducts.some(p => !p.categoryId)) {
           inlineKeyboard.push([{ text: `📁 سایر محصولات`, callback_data: `show_category_seller_uncategorized` }]);
         }
         bot!.sendMessage(chatId, '🛒 *خرید سرویس ویژه همکاران*\nلطفا دسته‌بندی محصول را انتخاب کنید:', {
@@ -1316,8 +1393,8 @@ export async function initBot() {
         return;
       }
 
-      const inlineKeyboard = stateObj.products.map(p => ([
-        { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
+      const inlineKeyboard = activeProducts.map(p => ([
+        { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, '🛒 *خرید سرویس ویژه همکاران*:\nلطفا یکی از پکیج‌های زیر را جهت ساخت اتوماتیک انتخاب کنید:', {
@@ -1374,16 +1451,19 @@ export async function initBot() {
 
     if (cleanText === 'خرید سرویس' || cleanText === 'خرید اکانت' || text.includes('خرید سرویس')) {
       const stateObj = db.getState();
-      if (stateObj.products.length === 0) {
+      const activeProducts = stateObj.products.filter(p => !p.disabled);
+      if (activeProducts.length === 0) {
         bot!.sendMessage(chatId, '❌ هیچ محصولی موجود نیست.');
         return;
       }
 
-      if (stateObj.categories && stateObj.categories.length > 0) {
-        const inlineKeyboard = stateObj.categories.map(c => ([
+      const activeCategories = (stateObj.categories || []).filter(c => !c.disabled);
+
+      if (activeCategories.length > 0) {
+        const inlineKeyboard = activeCategories.map(c => ([
           { text: `📁 ${c.name}`, callback_data: `show_category_${c.id}` }
         ]));
-        if (stateObj.products.some(p => !p.categoryId)) {
+        if (activeProducts.some(p => !p.categoryId)) {
           inlineKeyboard.push([{ text: `📁 سایر محصولات`, callback_data: `show_category_uncategorized` }]);
         }
         bot!.sendMessage(chatId, '🛍 لطفا دسته‌بندی محصول را انتخاب کنید:', {
@@ -1395,8 +1475,8 @@ export async function initBot() {
         return;
       }
 
-      const inlineKeyboard = stateObj.products.map(p => ([
-        { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
+      const inlineKeyboard = activeProducts.map(p => ([
+        { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, '🛍 لطفا یک محصول انتخاب کنید:', {
@@ -1479,6 +1559,24 @@ export async function initBot() {
     const state = db.getState();
     const isAdmin = state.adminIds.includes(chatId);
 
+    // Filter for force join
+    if (!isAdmin && state.forceJoinEnabled && state.forceJoinChannels && state.forceJoinChannels.length > 0) {
+       let unjoinedChannels: any[] = [];
+       for (const channel of state.forceJoinChannels) {
+           if (!channel.id) continue;
+           try {
+              const member = await bot!.getChatMember(channel.id, chatId);
+              if (member.status === 'left' || member.status === 'kicked') {
+                 unjoinedChannels.push(channel);
+              }
+           } catch (e) { }
+       }
+       if (unjoinedChannels.length > 0) {
+           bot!.answerCallbackQuery(query.id, { text: '⚠️ ابتدا در کانال‌های تعیین شده عضو شوید.', show_alert: true });
+           return;
+       }
+    }
+
     if (data && data.startsWith('approve_pay_')) {
       if (isAdmin) {
         const payId = data.replace('approve_pay_', '');
@@ -1492,6 +1590,7 @@ export async function initBot() {
           if (targetUser) {
             targetUser.balance = (targetUser.balance || 0) + amount;
             db.saveUser(targetUser);
+            checkPaygReactivation(targetUser).catch(console.error);
             
             pendingPayments.delete(payId); // Clean up
             
@@ -1973,6 +2072,7 @@ export async function initBot() {
       const categoryId = data.replace(isSeller ? 'show_category_seller_' : 'show_category_', '');
       
       const filteredProducts = state.products.filter(p => {
+        if (p.disabled) return false;
         if (categoryId === 'uncategorized') return !p.categoryId;
         return p.categoryId === categoryId;
       });
@@ -1984,7 +2084,7 @@ export async function initBot() {
       }
 
       const inlineKeyboard = filteredProducts.map(p => ([
-        { text: `${p.name} - ${p.price.toLocaleString()} تومان`, callback_data: `buy_${p.id}` }
+        { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, isSeller ? '🛒 *خرید سرویس ویژه همکاران*:\nلطفا یکی از پکیج‌های زیر را جهت ساخت اتوماتیک انتخاب کنید:' : '🛍 لطفا یک محصول انتخاب کنید:', {
@@ -2113,6 +2213,130 @@ export async function initBot() {
       console.error('[Backup Check Worker Error]', e.message);
     }
   }, 10 * 60 * 1000); // Check every 10 minutes
+
+  // Start limit check worker Let's check every 30 minutes
+  setInterval(async () => {
+    try {
+      const state = db.getState();
+      const inboundsList = await xui.getInbounds();
+      if (!inboundsList || inboundsList.length === 0) return;
+
+      const now = Date.now();
+      
+      let allClientsArray: any[] = [];
+      inboundsList.forEach(ib => {
+          if (ib.settings) {
+              const p = typeof ib.settings === 'string' ? JSON.parse(ib.settings) : ib.settings;
+              if (p && p.clients) {
+                  allClientsArray = allClientsArray.concat(p.clients);
+              }
+          }
+      });
+
+      for (const user of state.users) {
+          if (!user.purchases) continue;
+          let userChanged = false;
+          
+          for (const purchase of user.purchases) {
+              const c = allClientsArray.find(cl => cl.id === purchase.id || cl.email === purchase.id || (purchase.subUrl && cl.subId && purchase.subUrl.includes(cl.subId)));
+              if (!c) continue;
+
+              const total = c.total || 0;
+              const used = (c.up || 0) + (c.down || 0);
+              const expiry = c.expiryTime || 0;
+              const enable = c.enable !== false;
+
+              if (purchase.isPayAsYouGo && enable) {
+                  const lastUsed = purchase.lastUsedBytes || 0;
+                  if (used > lastUsed) {
+                      const diffBytes = used - lastUsed;
+                      const diffGb = diffBytes / (1024 * 1024 * 1024);
+                      const cost = Math.ceil(diffGb * (purchase.pricePerGb || 0));
+                      
+                      purchase.lastUsedBytes = used;
+                      user.balance -= cost;
+                      userChanged = true;
+
+                      const balanceEquivalentGb = user.balance / (purchase.pricePerGb || 1);
+
+                      if (user.balance <= 0) {
+                          user.balance = 0;
+                          await xui.updateClientEnable(c.email, false);
+                          purchase.paygDisabled = true;
+                          bot!.sendMessage(user.chatId, `❌ مشترک گرامی،\nموجودی کیف پول شما به اتمام رسید و سرویس "${purchase.name}" قطعا غیرفعال شد.\nجهت فعالسازی مجدد لطفا کیف پول خود را شارژ کنید.`);
+                      } else if (balanceEquivalentGb < 1) { // less than 1GB equivalent remaining
+                          if (!purchase.warnedPayg) {
+                              bot!.sendMessage(user.chatId, `⚠️ مشترک گرامی،\nموجودی کیف پول شما برای سرویس "${purchase.name}" کمتر از هزینه مصرف ۱ گیگابایت می‌باشد. جهت جلوگیری از قطعی، شارژ کنید.`);
+                              purchase.warnedPayg = true;
+                          }
+                      } else {
+                          if (purchase.warnedPayg) {
+                              purchase.warnedPayg = false;
+                          }
+                      }
+                  }
+              }
+
+              if (total > 0 && enable) {
+                  const mbLeft = ((total - used) / (1024 * 1024));
+                  if (mbLeft > 0 && mbLeft < 1000) { // < 1GB limit
+                      if (!purchase.warnedData) {
+                          bot!.sendMessage(user.chatId, `⚠️ مشترک گرامی،\nحجم باقی‌مانده سرویس "${purchase.name}" شما کمتر از ۱ گیگابایت می‌باشد.`);
+                          purchase.warnedData = true;
+                          userChanged = true;
+                      }
+                  } else if (mbLeft >= 1024) {
+                      if (purchase.warnedData) {
+                         purchase.warnedData = false;
+                         userChanged = true;
+                      }
+                  }
+              }
+
+              if (expiry > 0 && enable) {
+                  const hoursLeft = (expiry - now) / (1000 * 60 * 60);
+                  if (hoursLeft > 0 && hoursLeft < 24) {
+                      if (!purchase.warnedTime) {
+                          bot!.sendMessage(user.chatId, `⚠️ مشترک گرامی،\nکمتر از ۲۴ ساعت به پایان اعتبار سرویس "${purchase.name}" شما باقی مانده است.`);
+                          purchase.warnedTime = true;
+                          userChanged = true;
+                      }
+                  } else if (hoursLeft >= 24) {
+                      if (purchase.warnedTime) {
+                          purchase.warnedTime = false;
+                          userChanged = true;
+                      }
+                  }
+              }
+          }
+          if (userChanged) {
+             db.saveUser(user);
+          }
+      }
+    } catch (e: any) {
+        console.error('[Limit Check Worker Error]', e.message);
+    }
+  }, 5 * 60 * 1000); // Check every 5 minutes
+}
+
+export async function checkPaygReactivation(user: any) {
+  if (!user || user.balance <= 0 || !user.purchases) return;
+  let userChanged = false;
+  for (const purchase of user.purchases) {
+    if (purchase.isPayAsYouGo && purchase.paygDisabled && user.balance > 0) {
+      const balanceEquivalentGb = user.balance / (purchase.pricePerGb || 1);
+      if (balanceEquivalentGb >= 1) { // Only reactivate if they charged at least 1GB
+         await xui.updateClientEnable(purchase.id, true);
+         purchase.paygDisabled = false;
+         purchase.warnedPayg = false;
+         userChanged = true;
+         bot!.sendMessage(user.chatId, `✅ موجودی شما تا سقف مجاز پرداخت در ازای مصرف بالا رفت و سرویس "${purchase.name}" مجددا فعال گردید.`);
+      }
+    }
+  }
+  if (userChanged) {
+    db.saveUser(user);
+  }
 }
 
 export async function sendBroadcast(message: string) {

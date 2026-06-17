@@ -309,6 +309,69 @@ class XuiClient {
     }
   }
 
+  public async updateClientEnable(email: string, enable: boolean) {
+    try {
+      const opts = await this.getAuthOptions();
+      const inboundsList = await this.getInbounds();
+      let targetClient: any = null;
+      let primaryInboundId = 0;
+      
+      for (const ib of inboundsList) {
+        if (ib.settings) {
+          const parsed = typeof ib.settings === 'string' ? JSON.parse(ib.settings) : ib.settings;
+          if (parsed && parsed.clients) {
+            const found = parsed.clients.find((c: any) => c.email === email);
+            if (found) {
+              targetClient = found;
+              primaryInboundId = ib.id;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!targetClient) {
+        console.error(`[X-UI] Client ${email} not found for update`);
+        return false;
+      }
+
+      const uuid = targetClient.id || targetClient.password;
+      targetClient.enable = enable;
+
+      const settingsParams = {
+        clients: [targetClient]
+      };
+
+      // Depending on the exact X-UI panel, the payload needs the entire target config for that client
+      const payload = {
+        id: primaryInboundId,
+        settings: JSON.stringify(settingsParams)
+      };
+
+      const workingPrefix = this.workingApiPrefix || '/panel/api';
+      const paths = [
+        `${workingPrefix}/inbounds/updateClient/${uuid}`,
+        `${workingPrefix}/inbounds/updateclient/${uuid}`,
+        `/panel/api/inbounds/updateClient/${uuid}`
+      ];
+
+      for (const p of paths) {
+        try {
+           const res = await this.client.post(`${opts.baseURL}${p}`, payload, { headers: opts.headers, validateStatus: () => true });
+           if (res.data && res.data.success) {
+             console.log(`[X-UI] Successfully updated client enable: ${enable} for ${email}`);
+             return true;
+           }
+        } catch(e) {}
+      }
+
+      return false;
+    } catch (e: any) {
+      console.error('[X-UI] Error update client enable', e.message);
+      return false;
+    }
+  }
+
   public async renewClient(email: string, volumeGb: number, durationDays: number) {
     try {
       const opts = await this.getAuthOptions();

@@ -14,6 +14,7 @@ export interface PanelConfig {
 export interface Category {
   id: string;
   name: string;
+  disabled?: boolean;
 }
 
 export interface Product {
@@ -26,6 +27,8 @@ export interface Product {
   inboundId?: number | string;
   inboundIds?: (number | string)[];
   limitIp?: number;
+  disabled?: boolean;
+  isPayAsYouGo?: boolean;
 }
 
 export interface SellerDiscountRule {
@@ -42,6 +45,13 @@ export interface Purchase {
   volumeGb: number;
   durationDays: number;
   createdAt: string;
+  isPayAsYouGo?: boolean;
+  pricePerGb?: number;
+  lastUsedBytes?: number;
+  paygDisabled?: boolean;
+  warnedPayg?: boolean;
+  warnedData?: boolean;
+  warnedTime?: boolean;
 }
 
 export interface User {
@@ -79,6 +89,8 @@ export interface AppState {
   freeTestEnabled: boolean;
   freeTestInboundId?: number | string;
   freeTestInboundIds?: (number | string)[];
+  forceJoinEnabled?: boolean;
+  forceJoinChannels?: { id: string; name: string; url: string }[];
   adminIds: number[];
   referralRewardToman: number;
   cardNumber?: string;
