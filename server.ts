@@ -6,7 +6,7 @@ import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { createServer as createViteServer } from "vite";
 import { db } from "./server/db.js";
-import { initBot, sendBroadcast } from "./server/bot.js";
+import { initBot, sendBroadcast, checkPaygReactivation } from "./server/bot.js";
 import { xui } from "./server/xui.js";
 import { encryptData, decryptData } from "./server/crypto.js";
 
@@ -84,7 +84,9 @@ async function startServer() {
       supportUsername, 
       coupons,
       autoBackupIntervalHours,
-      autoBackupPassword
+      autoBackupPassword,
+      forceJoinEnabled,
+      forceJoinChannels
     } = req.body;
     
     const updates: any = { 
@@ -101,6 +103,8 @@ async function startServer() {
     if (coupons !== undefined) updates.coupons = coupons;
     if (autoBackupIntervalHours !== undefined) updates.autoBackupIntervalHours = Number(autoBackupIntervalHours);
     if (autoBackupPassword !== undefined) updates.autoBackupPassword = autoBackupPassword;
+    if (forceJoinEnabled !== undefined) updates.forceJoinEnabled = Boolean(forceJoinEnabled);
+    if (forceJoinChannels !== undefined) updates.forceJoinChannels = forceJoinChannels;
     if (freeTestInboundId !== undefined) {
       updates.freeTestInboundId = parseInboundId(freeTestInboundId);
     }
@@ -427,6 +431,7 @@ async function startServer() {
     }
     user.balance += parseInt(amount);
     db.saveUser(user);
+    checkPaygReactivation(user).catch(console.error);
     res.json({ success: true, balance: user.balance });
   });
 
