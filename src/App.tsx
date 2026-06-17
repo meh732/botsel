@@ -85,6 +85,10 @@ function SettingsView() {
 
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponPercent, setNewCouponPercent] = useState(20);
+  
+  const [newFjId, setNewFjId] = useState('');
+  const [newFjName, setNewFjName] = useState('');
+  const [newFjUrl, setNewFjUrl] = useState('');
 
   const fetchLocalBackups = async () => {
     try {
@@ -253,6 +257,18 @@ function SettingsView() {
     setSaving(false);
   };
 
+  const handleAddForceJoin = () => {
+    if(!newFjId || !newFjName || !newFjUrl) return alert('مشخصات کانال ناقص است');
+    const channels = state.forceJoinChannels || [];
+    setState({ ...state, forceJoinChannels: [...channels, { id: newFjId, name: newFjName, url: newFjUrl }] });
+    setNewFjId(''); setNewFjName(''); setNewFjUrl('');
+  };
+
+  const handleDeleteForceJoin = (idx: number) => {
+    const channels = state.forceJoinChannels || [];
+    setState({ ...state, forceJoinChannels: channels.filter((_:any, i:number) => i !== idx) });
+  };
+
   useEffect(() => {
     fetch('/api/state')
       .then(r => r.json())
@@ -305,7 +321,9 @@ function SettingsView() {
         adminIds: parsedAdminIds,
         coupons: state.coupons || [],
         autoBackupIntervalHours: state.autoBackupIntervalHours !== undefined ? Number(state.autoBackupIntervalHours) : 0,
-        autoBackupPassword: state.autoBackupPassword || ''
+        autoBackupPassword: state.autoBackupPassword || '',
+        forceJoinEnabled: state.forceJoinEnabled || false,
+        forceJoinChannels: state.forceJoinChannels || []
       })
     });
     const data = await res.json();
@@ -552,6 +570,60 @@ function SettingsView() {
               <input type="text" value={state.autoBackupPassword || ''} placeholder="رمز بکاپ (خالی برای عدم رمزگذاری)" onChange={e => setState({...state, autoBackupPassword: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-indigo-500 text-left font-mono" dir="ltr" />
               <p className="text-[11px] text-slate-500 mt-1">این پسورد برای رمزگذاری و محافظت از فایل‌های بکاپ ارسالی استفاده می‌شود.</p>
             </div>
+          </div>
+
+          <div className="border border-slate-200 rounded-lg p-5">
+            <div className="flex items-center justify-between mb-4">
+               <div>
+                  <h3 className="text-md font-bold text-slate-800 flex items-center gap-2"><Plus className="w-4 h-4 text-slate-500"/> جوین اجباری کانال‌ها</h3>
+                  <p className="text-xs text-slate-500">کاربران برای استفاده از ربات ملزم به عضویت در کانال‌های زیر خواهند بود.</p>
+               </div>
+               <label className="flex items-center cursor-pointer">
+                  <div className="relative">
+                    <input type="checkbox" className="sr-only" checked={state.forceJoinEnabled || false} onChange={e => setState({...state, forceJoinEnabled: e.target.checked})} />
+                    <div className={`block w-10 h-6 rounded-full transition ${state.forceJoinEnabled ? 'bg-indigo-600' : 'bg-slate-300'}`}></div>
+                    <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition transform ${state.forceJoinEnabled ? 'translate-x-4' : ''}`}></div>
+                  </div>
+                  <span className="mr-3 font-semibold text-sm">فعال‌سازی جوین اجباری</span>
+               </label>
+            </div>
+
+            {state.forceJoinEnabled && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                    <div>
+                      <label className="text-xs font-semibold text-slate-700 mb-1 block">آیدی عددی یا یوزرنیم کانال (مانند @mychannel)</label>
+                      <input type="text" value={newFjId} onChange={e=>setNewFjId(e.target.value)} className="w-full border p-2 text-sm rounded bg-slate-50" dir="ltr" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-700 mb-1 block">نام نمایشی کانال (روی دکمه)</label>
+                      <input type="text" value={newFjName} onChange={e=>setNewFjName(e.target.value)} className="w-full border p-2 text-sm rounded bg-slate-50" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-slate-700 mb-1 block">لینک عضویت کانال</label>
+                      <div className="flex gap-2">
+                        <input type="text" value={newFjUrl} onChange={e=>setNewFjUrl(e.target.value)} className="w-full border p-2 text-sm rounded bg-slate-50" dir="ltr" />
+                        <button onClick={handleAddForceJoin} className="bg-indigo-600 text-white px-3 py-2 rounded shrink-0">افزودن</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2 mt-4">
+                    {(!state.forceJoinChannels || state.forceJoinChannels.length === 0) && <div className="text-center text-sm text-slate-500">هیچ کانالی ثبت نشده است. ربات باید در کانال‌های ثبت شده ادمین باشد.</div>}
+                    {(state.forceJoinChannels || []).map((ch:any, idx:number) => (
+                       <div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border text-sm">
+                          <div className="flex items-center gap-3">
+                             <span className="font-bold text-indigo-700">{ch.name}</span>
+                             <span className="text-slate-500 font-mono text-xs">{ch.id}</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                             <a href={ch.url} target="_blank" className="text-blue-500 hover:underline px-2 text-xs">تست لینک</a>
+                             <button onClick={() => handleDeleteForceJoin(idx)} className="text-red-500 hover:text-red-700"><Trash2 className="w-4 h-4"/></button>
+                          </div>
+                       </div>
+                    ))}
+                  </div>
+                </div>
+            )}
           </div>
 
           <button onClick={saveGeneral} disabled={saving} className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center mr-auto">
@@ -941,7 +1013,7 @@ function ProductsView() {
   const [products, setProducts] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [inbounds, setInbounds] = useState<any[]>([]);
-  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[], limitIp: 1, categoryId: '' });
+  const [form, setForm] = useState({ name: '', price: 0, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [] as number[], limitIp: 1, categoryId: '', isPayAsYouGo: false });
   const [newCatName, setNewCatName] = useState('');
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
 
@@ -984,6 +1056,18 @@ function ProductsView() {
     setCategories(categories.filter(c => c.id !== id));
   };
 
+  const toggleCategoryStatus = async (cat: any) => {
+    const res = await fetch('/api/categories', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ...cat, disabled: !cat.disabled })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setCategories(data.categories);
+    }
+  };
+
   const addProduct = async () => {
     const payload = {
       ...form,
@@ -1014,19 +1098,33 @@ function ProductsView() {
       inboundId: p.inboundId ? String(p.inboundId) : '',
       inboundIds: p.inboundIds || [],
       limitIp: p.limitIp !== undefined ? p.limitIp : 1,
-      categoryId: p.categoryId || ''
+      categoryId: p.categoryId || '',
+      isPayAsYouGo: p.isPayAsYouGo || false
     });
   };
 
   const cancelEdit = () => {
     setEditingProductId(null);
-    setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1, categoryId: '' });
+    setForm({ name: '', price: 10000, volumeGb: 10, durationDays: 30, inboundId: '', inboundIds: [], limitIp: 1, categoryId: '', isPayAsYouGo: false });
   };
 
   const deleteProduct = async (id: string) => {
     if(!confirm('آیا از حذف این محصول مطمئن هستید؟')) return;
     await fetch(`/api/products/${id}`, { method: 'DELETE' });
     setProducts(products.filter(p => p.id !== id));
+  };
+
+  const toggleProductStatus = async (p: any) => {
+    const payload = { ...p, disabled: !p.disabled };
+    const res = await fetch('/api/products', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.success) {
+      setProducts(data.products);
+    }
   };
 
   return (
@@ -1047,7 +1145,10 @@ function ProductsView() {
             <div className="mt-4 flex flex-wrap gap-2">
               {categories.map(c => (
                 <div key={c.id} className="bg-slate-100 border border-slate-200 rounded-md px-3 py-1.5 flex items-center gap-2 text-sm text-slate-800">
-                  <span>{c.name}</span>
+                  <span className={c.disabled ? 'line-through text-slate-400' : ''}>{c.name} {c.disabled && '(غیرفعال)'}</span>
+                  <button onClick={() => toggleCategoryStatus(c)} className={`${c.disabled ? 'text-green-600' : 'text-amber-600'} hover:opacity-80 transition`} title={c.disabled ? 'فعال کردن' : 'غیرفعال کردن'}>
+                    {c.disabled ? <CheckCircle className="w-4 h-4" /> : <Box className="w-4 h-4" />}
+                  </button>
                   <button onClick={() => deleteCategory(c.id)} className="text-red-500 hover:text-red-700 transition">
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -1075,21 +1176,29 @@ function ProductsView() {
                <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm" placeholder="مثال: ۱ ماهه ۵۰ گیگابایت"/>
              </div>
              <div>
-               <label className="block text-xs font-semibold text-slate-700 mb-1">قیمت (تومان)</label>
+               <label className="block text-xs font-semibold text-slate-700 mb-1">{form.isPayAsYouGo ? 'قیمت هر گیگ (تومان)' : 'قیمت (تومان)'}</label>
                <input type="number" value={form.price} onChange={e=>setForm({...form, price: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
              </div>
              <div>
-               <label className="block text-xs font-semibold text-slate-700 mb-1">حجم (GB)</label>
-               <input type="number" value={form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
+               <label className={`block text-xs font-semibold text-slate-700 mb-1 ${form.isPayAsYouGo ? 'opacity-50' : ''}`}>حجم (GB)</label>
+               <input type="number" disabled={form.isPayAsYouGo} value={form.isPayAsYouGo ? 0 : form.volumeGb} onChange={e=>setForm({...form, volumeGb: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm disabled:bg-slate-100 disabled:text-slate-400"/>
              </div>
              <div>
-               <label className="block text-xs font-semibold text-slate-700 mb-1">مدت (روز)</label>
-               <input type="number" value={form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
+               <label className={`block text-xs font-semibold text-slate-700 mb-1 ${form.isPayAsYouGo ? 'opacity-50' : ''}`}>مدت (روز)</label>
+               <input type="number" disabled={form.isPayAsYouGo} value={form.isPayAsYouGo ? 0 : form.durationDays} onChange={e=>setForm({...form, durationDays: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm disabled:bg-slate-100 disabled:text-slate-400"/>
              </div>
              <div>
                <label className="block text-xs font-semibold text-slate-700 mb-1">IP Limit</label>
                <input type="number" value={form.limitIp} onChange={e=>setForm({...form, limitIp: Number(e.target.value)})} className="w-full px-3 py-2 border rounded-md focus:ring-2 focus:ring-indigo-500 text-sm"/>
              </div>
+           </div>
+
+           <div>
+              <label className="flex items-center cursor-pointer mb-2">
+                <input type="checkbox" checked={form.isPayAsYouGo} onChange={e => setForm({...form, isPayAsYouGo: e.target.checked})} className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 form-checkbox w-4 h-4" />
+                <span className="mr-2 text-sm font-bold text-slate-800">محصول «پرداخت در ازای مصرف» (Pay-As-You-Go)</span>
+              </label>
+              {form.isPayAsYouGo && <p className="text-xs text-amber-600 font-medium">با انتخاب این گزینه، حجم و زمان کاربر نامحدود تنظیم می‌شود و هزینه بر اساس میزان مصرف (به ازای هر گیگابایت) از کیف پول کاربر کسر خواهد شد.</p>}
            </div>
 
            {/* Row 2: Multiple Inbound Checkboxes */}
@@ -1166,17 +1275,22 @@ function ProductsView() {
 
        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {products.map(p => (
-            <div key={p.id} className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col hover:shadow-md transition">
-               <h3 className="text-lg font-bold text-slate-900 mb-2">{p.name}</h3>
+            <div key={p.id} className={`bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col hover:shadow-md transition ${p.disabled ? 'opacity-60' : ''}`}>
+               <h3 className={`text-lg font-bold text-slate-900 mb-2 ${p.disabled ? 'line-through text-slate-500' : ''}`}>
+                 {p.name} {p.disabled && '(غیرفعال)'}
+                 {p.isPayAsYouGo && <span className="mr-2 text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded align-middle">پرداخت در ازای مصرف</span>}
+               </h3>
                {p.categoryId && (
                  <div className="text-xs text-indigo-600 bg-indigo-50 px-2 py-1 rounded inline-block w-fit mb-3">
                    گروه: {categories.find(c => c.id === p.categoryId)?.name || 'نامشخص'}
                  </div>
                )}
-               <div className="text-2xl font-black text-indigo-600 mb-4">{p.price.toLocaleString()} <span className="text-sm font-normal text-slate-500">تومان</span></div>
+               <div className="text-2xl font-black text-indigo-600 mb-4">
+                 {p.price.toLocaleString()} <span className="text-sm font-normal text-slate-500">{p.isPayAsYouGo ? 'تومان / هر گیگابایت' : 'تومان'}</span>
+               </div>
                <div className="space-y-2 mb-6 flex-1 text-sm text-slate-700">
-                 <div className="flex justify-between border-b pb-1"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
-                 <div className="flex justify-between border-b pb-1"><span>مدت زمان:</span><span className="font-bold text-slate-800">{p.durationDays === 0 ? 'نامحدود' : `${p.durationDays} روز`}</span></div>
+                 <div className="flex justify-between border-b pb-1"><span>میزان حجم:</span><span className="font-bold text-slate-800">{p.isPayAsYouGo ? 'نامحدود (پرداخت درصدی)' : p.volumeGb === 0 ? 'نامحدود' : `${p.volumeGb} GB`}</span></div>
+                 <div className="flex justify-between border-b pb-1"><span>مدت زمان:</span><span className="font-bold text-slate-800">{p.isPayAsYouGo ? 'نامحدود' : p.durationDays === 0 ? 'نامحدود' : `${p.durationDays} روز`}</span></div>
                  <div className="flex justify-between border-b pb-1"><span>محدودیت کاربر (IP):</span><span className="font-bold text-slate-800">{p.limitIp || 0}</span></div>
                  <div className="flex justify-between pb-1">
                    <span>اینباندهای پکیج:</span>
@@ -1189,10 +1303,13 @@ function ProductsView() {
                </div>
                <div className="flex gap-2 w-full mt-2">
                   <button onClick={() => startEditProduct(p)} className="flex-1 py-1.5 flex items-center justify-center gap-1 text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-md transition font-medium text-xs">
-                    <Edit2 className="w-3.5 h-3.5" /> <span>ویرایش پکیج</span>
+                    <Edit2 className="w-3.5 h-3.5" /> <span>ویرایش</span>
+                  </button>
+                  <button onClick={() => toggleProductStatus(p)} className={`flex-1 py-1.5 flex items-center justify-center gap-1 ${p.disabled ? 'text-green-600 bg-green-50 border-green-200' : 'text-slate-600 bg-slate-50 border-slate-200'} border rounded-md transition font-medium text-xs`} title={p.disabled ? 'فعال کردن' : 'غیرفعال کردن'}>
+                    {p.disabled ? <CheckCircle className="w-3.5 h-3.5" /> : <Box className="w-3.5 h-3.5" />} <span>{p.disabled ? 'فعال' : 'غیرفعال'}</span>
                   </button>
                   <button onClick={() => deleteProduct(p.id)} className="flex-1 py-1.5 flex items-center justify-center gap-1 text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md transition font-medium text-xs">
-                    <Trash2 className="w-3.5 h-3.5" /> <span>حذف پکیج</span>
+                    <Trash2 className="w-3.5 h-3.5" /> <span>حذف</span>
                   </button>
                 </div>
                 <button style={{ display: 'none' }} className="hidden">
