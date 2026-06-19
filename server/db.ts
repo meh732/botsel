@@ -78,12 +78,21 @@ export interface Coupon {
   discountPercent: number; // e.g. 15 for 15%
 }
 
+export interface PendingPayment {
+  id: string;
+  chatId: number;
+  amount: number;
+  fileId?: string;
+  timestamp: number;
+}
+
 export interface AppState {
   botToken?: string;
   panel: PanelConfig;
   categories?: Category[];
   products: Product[];
   users: User[];
+  pendingPayments?: PendingPayment[];
   freeTestVolumeGb: number;
   freeTestDurationDays: number;
   freeTestEnabled: boolean;
