@@ -1056,6 +1056,19 @@ function ProductsView() {
     setCategories(categories.filter(c => c.id !== id));
   };
 
+  const updateCategoryName = async (cat: any, newName: string) => {
+    if (!newName.trim()) return;
+    const res = await fetch('/api/categories', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ...cat, name: newName.trim() })
+    });
+    const data = await res.json();
+    if (data.success) {
+      setCategories(data.categories);
+    }
+  };
+
   const toggleCategoryStatus = async (cat: any) => {
     const res = await fetch('/api/categories', {
       method: 'POST',
@@ -1146,6 +1159,12 @@ function ProductsView() {
               {categories.map(c => (
                 <div key={c.id} className="bg-slate-100 border border-slate-200 rounded-md px-3 py-1.5 flex items-center gap-2 text-sm text-slate-800">
                   <span className={c.disabled ? 'line-through text-slate-400' : ''}>{c.name} {c.disabled && '(غیرفعال)'}</span>
+                  <button onClick={() => {
+                     const newName = window.prompt('نام جدید گروه را وارد کنید:', c.name);
+                     if (newName !== null) updateCategoryName(c, newName);
+                  }} className="text-blue-500 hover:text-blue-700 transition" title="ویرایش نام گروه">
+                    <Edit2 className="w-4 h-4" />
+                  </button>
                   <button onClick={() => toggleCategoryStatus(c)} className={`${c.disabled ? 'text-green-600' : 'text-amber-600'} hover:opacity-80 transition`} title={c.disabled ? 'فعال کردن' : 'غیرفعال کردن'}>
                     {c.disabled ? <CheckCircle className="w-4 h-4" /> : <Box className="w-4 h-4" />}
                   </button>
