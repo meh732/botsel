@@ -178,13 +178,42 @@ export async function initBot() {
     console.error('[Bot Error] Exception thrown during Bot creation:', err.message || err);
   }
 
-  async function executePurchase(chatId: number, product: any, discountPercent?: number) {
+  async function executePurchase(chatId: number, product: any, couponCode?: string) {
     const user = db.getUser(chatId);
     if (!user) return;
     const state = db.getState();
 
     let finalPrice = product.price;
-    const baseDiscount = discountPercent || 0;
+    let baseDiscount = 0;
+    
+    // Process Coupon if provided
+    let appliedCoupon: any = null;
+    if (couponCode) {
+      const couponsList = state.coupons || [];
+      const matchCoupon = couponsList.find((c: any) => c.code === couponCode);
+      if (matchCoupon) {
+        // Validate coupon again
+        let isValid = true;
+        if (matchCoupon.expirationDate && new Date(matchCoupon.expirationDate) < new Date()) {
+          isValid = false; // Expired
+        }
+        if (matchCoupon.maxUsage && matchCoupon.usedCount !== undefined && matchCoupon.usedCount >= matchCoupon.maxUsage) {
+          isValid = false; // Max total usage reached
+        }
+        if (matchCoupon.maxUsagePerUser && matchCoupon.usedBy) {
+          const userUsage = matchCoupon.usedBy[String(chatId)] || 0;
+          if (userUsage >= matchCoupon.maxUsagePerUser) {
+            isValid = false; // Max per-user usage reached
+          }
+        }
+        if (isValid) {
+          baseDiscount = matchCoupon.discountPercent;
+          appliedCoupon = matchCoupon;
+        } else {
+          bot!.sendMessage(chatId, `❌ متاسفانه کد تخفیف *${couponCode}* منقضی شده یا ظرفیت آن تکمیل شده است و در این خرید اعمال نشد.`, { parse_mode: 'Markdown' });
+        }
+      }
+    }
     
     let sellerDiscount = 0;
     if (user.isSeller) {
@@ -285,14 +314,29 @@ export async function initBot() {
 
       db.saveUser(user);
 
+      // Increment coupon usages if one was applied
+      if (appliedCoupon) {
+        appliedCoupon.usedCount = (appliedCoupon.usedCount || 0) + 1;
+        appliedCoupon.usedBy = appliedCoupon.usedBy || {};
+        appliedCoupon.usedBy[String(chatId)] = (appliedCoupon.usedBy[String(chatId)] || 0) + 1;
+        
+        // update coupons list
+        const couponsList = state.coupons || [];
+        const index = couponsList.findIndex((c: any) => c.code === appliedCoupon.code);
+        if (index > -1) {
+          couponsList[index] = appliedCoupon;
+          db.updateState({ coupons: couponsList });
+        }
+      }
+
       let finalMsg = `✅ خرید با موفقیت انجام شد!\n\n📦 ${product.name}\n`;
       if (user.isSeller) {
          finalMsg += `📉 بدهی جدید شما: ${(user.debt || 0).toLocaleString()} تومان\n\n`;
       } else {
          finalMsg += `💰 موجودی جدید: ${user.balance.toLocaleString()} تومان\n\n`;
       }
-      if (discountPercent) {
-         finalMsg += `🎫 تخفیف اعمال شده: %${discountPercent}\n💰 مبلغ نهایی کسر شده: ${finalPrice.toLocaleString()} تومان\n\n`;
+      if (appliedCoupon) {
+         finalMsg += `🎫 تخفیف اعمال شده: %${appliedCoupon.discountPercent}\n💰 مبلغ نهایی کسر شده: ${finalPrice.toLocaleString()} تومان\n\n`;
       }
       bot!.sendMessage(chatId, finalMsg, { parse_mode: 'Markdown' });
       await sendServiceInfo(chatId, newPurchase);
@@ -443,7 +487,15 @@ export async function initBot() {
       msg += `❌ هیچ کد تخفیفی در حال حاضر تعریف نشده است.`;
     } else {
       coupons.forEach((c: any, idx: number) => {
-        msg += `${idx + 1}- 🏷 کد: \`${c.code}\` — %${c.discountPercent} تخفیف\n`;
+        msg += `*${idx + 1}-* 🏷 کد: \`${c.code}\` — %${c.discountPercent} تخفیف\n`;
+        if (c.maxUsage) msg += `   📊 محدودیت مصرف کل: ${c.usedCount || 0} / ${c.maxUsage}\n`;
+        if (c.maxUsagePerUser) msg += `   👤 محدودیت هر کاربر: ${c.maxUsagePerUser} بار\n`;
+        if (c.expirationDate) {
+          const daysLeft = Math.ceil((new Date(c.expirationDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+          const expStr = daysLeft > 0 ? `${daysLeft} روز باقیمانده` : `منقضی شده`;
+          msg += `   ⏳ اعتبار: ${expStr}\n`;
+        }
+        msg += `\n`;
       });
     }
 
@@ -702,9 +754,27 @@ export async function initBot() {
       const inputCoupon = text.trim().toUpperCase();
       const couponsList = state.coupons || [];
       const matchCoupon = couponsList.find((c: any) => c.code === inputCoupon);
+      
+      let isValid = true;
+      if (matchCoupon) {
+        if (matchCoupon.expirationDate && new Date(matchCoupon.expirationDate) < new Date()) {
+          isValid = false; // Expired
+        }
+        if (matchCoupon.maxUsage && matchCoupon.usedCount !== undefined && matchCoupon.usedCount >= matchCoupon.maxUsage) {
+          isValid = false; // Max total usage reached
+        }
+        if (matchCoupon.maxUsagePerUser && matchCoupon.usedBy) {
+          const userUsage = matchCoupon.usedBy[String(chatId)] || 0;
+          if (userUsage >= matchCoupon.maxUsagePerUser) {
+            isValid = false; // Max per-user usage reached
+          }
+        }
+      } else {
+        isValid = false;
+      }
 
-      if (!matchCoupon) {
-        bot!.sendMessage(chatId, `❌ کد تخفیف *${inputCoupon}* معتبر نبود یا منقضی شده است.`, {
+      if (!isValid) {
+        bot!.sendMessage(chatId, `❌ کد تخفیف *${inputCoupon}* نامعتبر، منقضی شده یا ظرفیت آن تکمیل شده است.`, {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -724,7 +794,7 @@ export async function initBot() {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
-              [{ text: `🛒 تایید خرید و پرداخت (${finalPrice.toLocaleString()} تومان)`, callback_data: `buy_now_with_coupon_${productId}_${discountPercent}` }],
+              [{ text: `🛒 تایید خرید و پرداخت (${finalPrice.toLocaleString()} تومان)`, callback_data: `buy_now_with_coupon_${productId}_${inputCoupon}` }],
               [{ text: '❌ انصراف از خرید', callback_data: 'cancel_purchase' }]
             ]
           }
@@ -852,7 +922,7 @@ export async function initBot() {
       if (sessionType === 'add_coupon') {
         const parts = text.split(',');
         if (parts.length < 2) {
-          bot!.sendMessage(chatId, '❌ فرمت اشتباه است. الگو: `OFF50,50` (نام کد, درصد تخفیف)');
+          bot!.sendMessage(chatId, '❌ فرمت اشتباه است. الگو: `کد,درصد,...`');
           sendCouponsMenu(chatId);
           return;
         }
@@ -863,15 +933,39 @@ export async function initBot() {
           sendCouponsMenu(chatId);
           return;
         }
+
+        const maxUsage = parts[2] && parts[2].trim() ? parseInt(parts[2].trim()) : undefined;
+        const maxUsagePerUser = parts[3] && parts[3].trim() ? parseInt(parts[3].trim()) : undefined;
+        let expirationDate = undefined;
+        if (parts[4] && parts[4].trim()) {
+           const days = parseInt(parts[4].trim());
+           if (!isNaN(days) && days > 0) {
+              const d = new Date();
+              d.setDate(d.getDate() + days);
+              expirationDate = d.toISOString();
+           }
+        }
+
         const couponsList = state.coupons || [];
         const existing = couponsList.find((c: any) => c.code === code);
+        
+        let newCoupon = {
+           code, 
+           discountPercent: percent,
+           maxUsage: !isNaN(maxUsage as any) ? maxUsage : undefined,
+           maxUsagePerUser: !isNaN(maxUsagePerUser as any) ? maxUsagePerUser : undefined,
+           expirationDate,
+           usedCount: existing ? existing.usedCount : 0,
+           usedBy: existing ? existing.usedBy : {}
+        };
+
         if (existing) {
-          existing.discountPercent = percent;
+          Object.assign(existing, newCoupon);
         } else {
-          couponsList.push({ code, discountPercent: percent });
+          couponsList.push(newCoupon);
         }
         db.updateState({ coupons: couponsList });
-        bot!.sendMessage(chatId, `✅ کد تخفیف *${code}* با تخفیف %${percent} با موفقیت ثبت شد.`, { parse_mode: 'Markdown' });
+        bot!.sendMessage(chatId, `✅ کد تخفیف *${code}* با تخفیف %${percent} با موفقیت ثبت/بروزرسانی شد.`, { parse_mode: 'Markdown' });
         sendCouponsMenu(chatId);
         return;
       }
@@ -1900,7 +1994,11 @@ export async function initBot() {
     if (data === 'add_coupon') {
       if (isAdmin) {
         adminSession.set(chatId, 'add_coupon');
-        bot!.sendMessage(chatId, '🎫 لطفا کد تخفیف جدید و درصد آن را طبق الگو ارسال کُنید:\n\n`نام‌کد,درصدتخفیف`\nمثال:\n`WIFI50,50`');
+        const msg = '🎫 لطفا مشخصات کد تخفیف را با کاما جدا کرده و ارسال کنید (مقادیر ستاره‌دار اختیاری است و میتوانید خالی بگذارید):\n\n' +
+          '`کد,درصدتخفیف,تعدادکل‌مصرف*,تعدادمصرف‌هرکاربر*,تعدادروز‌اعتبار*`\n\n' +
+          'مثال ساده:\n`YALDA,20` (۲۰ درصد تخفیف، بدون محدودیت)\n\n' +
+          'مثال کامل:\n`NOROUZ,50,100,1,10` (۵۰ درصد تخفیف، ۱۰۰ بار قابل استفاده، ۱ بار برای هر نفر، تا ۱۰ روز معتبر)';
+        bot!.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
       }
       bot!.answerCallbackQuery(query.id);
       return;
@@ -2241,12 +2339,12 @@ export async function initBot() {
 
     if (data && data.startsWith('buy_now_')) {
       let productId = '';
-      let discountPercent: number | undefined = undefined;
+      let couponCode: string | undefined = undefined;
 
       if (data.startsWith('buy_now_with_coupon_')) {
         const couponParts = data.replace('buy_now_with_coupon_', '').split('_');
         productId = couponParts[0];
-        discountPercent = parseInt(couponParts[1]);
+        couponCode = couponParts[1];
       } else {
         productId = data.replace('buy_now_', '');
       }
@@ -2258,7 +2356,7 @@ export async function initBot() {
         return;
       }
 
-      await executePurchase(chatId, product, discountPercent);
+      await executePurchase(chatId, product, couponCode);
       bot!.answerCallbackQuery(query.id);
       return;
     }

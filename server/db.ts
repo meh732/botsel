@@ -76,6 +76,11 @@ export interface User {
 export interface Coupon {
   code: string;
   discountPercent: number; // e.g. 15 for 15%
+  maxUsage?: number;
+  usedCount?: number;
+  expirationDate?: string;
+  maxUsagePerUser?: number;
+  usedBy?: Record<string, number>; // Stringified chatId to avoid index signature issues, or number
 }
 
 export interface PendingPayment {
