@@ -85,6 +85,10 @@ function SettingsView() {
 
   const [newCouponCode, setNewCouponCode] = useState('');
   const [newCouponPercent, setNewCouponPercent] = useState(20);
+  const [newCouponMaxUsage, setNewCouponMaxUsage] = useState('');
+  const [newCouponMaxUsagePerUser, setNewCouponMaxUsagePerUser] = useState('');
+  const [newCouponExpirationDays, setNewCouponExpirationDays] = useState('');
+
   
   const [newFjId, setNewFjId] = useState('');
   const [newFjName, setNewFjName] = useState('');
@@ -183,7 +187,15 @@ function SettingsView() {
       return;
     }
 
-    const updatedCoupons = [...currentCoupons, { code, discountPercent: percent }];
+    const updatedCoupons = [...currentCoupons, { 
+      code, 
+      discountPercent: percent,
+      maxUsage: newCouponMaxUsage ? parseInt(newCouponMaxUsage) : undefined,
+      maxUsagePerUser: newCouponMaxUsagePerUser ? parseInt(newCouponMaxUsagePerUser) : undefined,
+      expirationDate: newCouponExpirationDays ? new Date(Date.now() + parseInt(newCouponExpirationDays) * 24 * 60 * 60 * 1000).toISOString() : undefined,
+      usedCount: 0,
+      usedBy: {}
+    }];
     
     setSaving(true);
     const parsedAdminIds = adminIdsStr
@@ -214,6 +226,9 @@ function SettingsView() {
     if (data.success) {
       setState((prev: any) => ({ ...prev, coupons: updatedCoupons }));
       setNewCouponCode('');
+      setNewCouponMaxUsage('');
+      setNewCouponMaxUsagePerUser('');
+      setNewCouponExpirationDays('');
       alert('کد تخفیف با موفقیت ایجاد شد.');
     }
     setSaving(false);
@@ -781,18 +796,30 @@ function SettingsView() {
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
         <h2 className="text-lg font-bold mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-indigo-600"/> مدیریت کدهای تخفیف و کوپن‌ها (Tickets)</h2>
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end bg-slate-50 p-4 rounded-lg border">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end bg-slate-50 p-4 rounded-lg border">
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">کد تخفیف (کوپن)</label>
-              <input value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} type="text" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono text-left" placeholder="مثال: OFF50" />
+              <label className="block text-xs font-medium text-slate-600 mb-1">کد (مثال: YALDA)</label>
+              <input value={newCouponCode} onChange={e => setNewCouponCode(e.target.value)} type="text" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono text-left" placeholder="OFF50" />
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">درصد تخفیف (٪)</label>
               <input value={newCouponPercent} onChange={e => setNewCouponPercent(Number(e.target.value))} type="number" min="1" max="100" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono" placeholder="20" />
             </div>
             <div>
-              <button onClick={handleAddCoupon} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-medium text-xs transition">ایجاد کد تخفیف جدید</button>
+              <label className="block text-xs font-medium text-slate-600 mb-1">تعداد مجاز کل (اختیاری)</label>
+              <input value={newCouponMaxUsage} onChange={e => setNewCouponMaxUsage(e.target.value)} type="number" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono" placeholder="بدون محدودیت" />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">مجاز هر کاربر (اختیاری)</label>
+              <input value={newCouponMaxUsagePerUser} onChange={e => setNewCouponMaxUsagePerUser(e.target.value)} type="number" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono" placeholder="1" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">اعتبار (روز - اختیاری)</label>
+              <input value={newCouponExpirationDays} onChange={e => setNewCouponExpirationDays(e.target.value)} type="number" className="w-full px-3 py-1.5 border rounded-md text-sm font-mono" placeholder="مثلا 10" />
+            </div>
+          </div>
+          <div>
+            <button onClick={handleAddCoupon} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md font-medium text-xs transition">ایجاد کد تخفیف جدید</button>
           </div>
 
           <div className="border rounded-md overflow-hidden">
@@ -800,7 +827,8 @@ function SettingsView() {
                 <thead className="bg-slate-100 text-slate-600 border-b">
                   <tr>
                     <th className="px-4 py-2 font-medium">کد تخفیف</th>
-                    <th className="px-4 py-2 font-medium">درصد تخفیف</th>
+                    <th className="px-4 py-2 font-medium">درصد</th>
+                    <th className="px-4 py-2 font-medium text-center">جزئیات و محدودیت‌ها</th>
                     <th className="px-4 py-2 font-medium text-left">عملیات</th>
                   </tr>
                 </thead>
@@ -809,13 +837,19 @@ function SettingsView() {
                     <tr key={c.code} className="border-b last:border-0 hover:bg-slate-50 transition">
                       <td className="px-4 py-2 font-mono font-bold text-slate-800">{c.code}</td>
                       <td className="px-4 py-2 font-mono text-indigo-600 font-bold">{c.discountPercent}٪</td>
+                      <td className="px-4 py-2 text-xs text-slate-600 text-center space-y-1">
+                        {c.maxUsage && <div>کل: {c.usedCount || 0}/{c.maxUsage}</div>}
+                        {c.maxUsagePerUser && <div>هر کاربر: {c.maxUsagePerUser}</div>}
+                        {c.expirationDate && <div>اعتبار تا: {new Date(c.expirationDate).toLocaleDateString('fa-IR')}</div>}
+                        {!c.maxUsage && !c.maxUsagePerUser && !c.expirationDate && <span className="text-slate-400">بدون محدودیت خاص</span>}
+                      </td>
                       <td className="px-4 py-2 text-left">
                         <button onClick={() => handleDeleteCoupon(c.code)} className="text-red-600 hover:text-red-800 p-1 font-medium text-xs transition">حذف</button>
                       </td>
                     </tr>
                   ))}
                   {(!state.coupons || state.coupons.length === 0) && (
-                    <tr><td colSpan={3} className="px-4 py-4 text-center text-slate-400 text-xs">هیچ کد تخفیفی تعریف نشده است.</td></tr>
+                    <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400 text-xs">هیچ کد تخفیفی تعریف نشده است.</td></tr>
                   )}
                 </tbody>
              </table>
