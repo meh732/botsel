@@ -20,6 +20,7 @@ let bot: TelegramBot | null = null;
 let isPolling = false;
 const adminSession = new Map<number, string>();
 const userSession = new Map<number, { action: string; amount?: number }>();
+const purchaseLocks = new Set<number>();
 // pendingPayments moved to db.getState().pendingPayments
 
 async function sendServiceInfo(chatId: number, purchase: any) {
@@ -179,6 +180,19 @@ export async function initBot() {
   }
 
   async function executePurchase(chatId: number, product: any, couponCode?: string) {
+    if (purchaseLocks.has(chatId)) {
+      bot!.sendMessage(chatId, '⏳ در حال پردازش درخواست خرید قبلی شما، لطفا صبر کنید...');
+      return;
+    }
+    purchaseLocks.add(chatId);
+    try {
+      await _executePurchaseInternal(chatId, product, couponCode);
+    } finally {
+      purchaseLocks.delete(chatId);
+    }
+  }
+
+  async function _executePurchaseInternal(chatId: number, product: any, couponCode?: string) {
     const user = db.getUser(chatId);
     if (!user) return;
     const state = db.getState();
