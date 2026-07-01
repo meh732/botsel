@@ -539,6 +539,145 @@ class XuiClient {
     }
   }
 
+  private selfHealProductsAndInbounds(inboundsList: any[]) {
+    if (!inboundsList || inboundsList.length === 0) return;
+    try {
+      const state = db.getState();
+      
+      const isTargetValid = (target: any) => {
+        if (target === undefined || target === null || target === '') return false;
+        const targetStr = String(target).trim().toLowerCase();
+        const targetNum = Number(target);
+        return inboundsList.some(ib => (
+          (!isNaN(targetNum) && Number(ib.id) === targetNum) ||
+          (ib.remark && String(ib.remark).trim().toLowerCase() === targetStr) ||
+          (ib.tag && String(ib.tag).trim().toLowerCase() === targetStr) ||
+          (ib.port && String(ib.port).trim() === targetStr)
+        ));
+      };
+
+      let stateChanged = false;
+
+      // 1. Clean products
+      const updatedProducts = (state.products || []).map(product => {
+        let inboundIdsChanged = false;
+        let validInboundIds: (string | number)[] = [];
+
+        if (Array.isArray(product.inboundIds) && product.inboundIds.length > 0) {
+          validInboundIds = product.inboundIds.filter(id => {
+            if (isTargetValid(id)) {
+              return true;
+            } else {
+              inboundIdsChanged = true;
+              return false;
+            }
+          });
+        }
+
+        let updatedProduct = { ...product };
+
+        if (product.inboundId) {
+          if (!isTargetValid(product.inboundId)) {
+            inboundIdsChanged = true;
+            delete updatedProduct.inboundId;
+          }
+        }
+
+        if (validInboundIds.length === 0 && !updatedProduct.inboundId) {
+          const fallbackInboundId = inboundsList[0].id;
+          validInboundIds = [fallbackInboundId];
+          inboundIdsChanged = true;
+          console.log(`[Self-Heal] Product "${product.name}" had all configured inbounds deleted. Falling back to inbound ID: ${fallbackInboundId}`);
+        }
+
+        if (inboundIdsChanged) {
+          stateChanged = true;
+          return {
+            ...updatedProduct,
+            inboundIds: validInboundIds
+          };
+        }
+        return product;
+      });
+
+      // 2. Clean free test config
+      let validFreeTestInboundIds: (string | number)[] = [];
+      let freeTestChanged = false;
+
+      if (Array.isArray(state.freeTestInboundIds) && state.freeTestInboundIds.length > 0) {
+        validFreeTestInboundIds = state.freeTestInboundIds.filter(id => {
+          if (isTargetValid(id)) {
+            return true;
+          } else {
+            freeTestChanged = true;
+            return false;
+          }
+        });
+      }
+
+      let validFreeTestInboundId = state.freeTestInboundId;
+      if (state.freeTestInboundId && !isTargetValid(state.freeTestInboundId)) {
+        validFreeTestInboundId = undefined;
+        freeTestChanged = true;
+      }
+
+      if (validFreeTestInboundIds.length === 0 && !validFreeTestInboundId) {
+        const fallbackInboundId = inboundsList[0].id;
+        validFreeTestInboundIds = [fallbackInboundId];
+        freeTestChanged = true;
+        console.log(`[Self-Heal] Free test had all configured inbounds deleted. Falling back to inbound ID: ${fallbackInboundId}`);
+      }
+
+      // 3. Clean default panel settings
+      let panelInboundIdsChanged = false;
+      let validPanelInboundIds: (string | number)[] = [];
+      let validPanelInboundId = state.panel ? state.panel.inboundId : undefined;
+
+      if (state.panel) {
+        if (Array.isArray(state.panel.inboundIds) && state.panel.inboundIds.length > 0) {
+          validPanelInboundIds = state.panel.inboundIds.filter(id => {
+            if (isTargetValid(id)) {
+              return true;
+            } else {
+              panelInboundIdsChanged = true;
+              return false;
+            }
+          });
+        }
+
+        if (state.panel.inboundId && !isTargetValid(state.panel.inboundId)) {
+          validPanelInboundId = undefined;
+          panelInboundIdsChanged = true;
+        }
+
+        if (validPanelInboundIds.length === 0 && !validPanelInboundId) {
+          const fallbackInboundId = inboundsList[0].id;
+          validPanelInboundIds = [fallbackInboundId];
+          panelInboundIdsChanged = true;
+          console.log(`[Self-Heal] Panel settings had all configured inbounds deleted. Falling back to inbound ID: ${fallbackInboundId}`);
+        }
+      }
+
+      if (stateChanged || freeTestChanged || panelInboundIdsChanged) {
+        const updatedPanel = state.panel ? {
+          ...state.panel,
+          inboundIds: validPanelInboundIds,
+          inboundId: validPanelInboundId
+        } : undefined;
+
+        db.updateState({
+          products: updatedProducts,
+          freeTestInboundIds: validFreeTestInboundIds,
+          freeTestInboundId: validFreeTestInboundId,
+          panel: updatedPanel
+        });
+        console.log('[Self-Heal] Successfully synchronized database state to remove deleted inbounds.');
+      }
+    } catch (err: any) {
+      console.error('[Self-Heal Error] Failed to execute self healing:', err.message);
+    }
+  }
+
   public async addClient(email: string, volumeGb: number, durationDays: number, targetInboundIds?: string | number | (string | number)[], limitIp: number = 0, telegramId?: string, group?: string) {
     const state = db.getState();
     let rawTargets: (string | number)[] = [];
@@ -567,6 +706,11 @@ class XuiClient {
       // Fetch live inbounds from the panel to resolve tags, remarks, and ports dynamically
       const inboundsList: any[] = await this.getInbounds() || [];
       
+      // Perform self-healing on database state for deleted inbounds
+      if (inboundsList.length > 0) {
+        this.selfHealProductsAndInbounds(inboundsList);
+      }
+
       let resolvedInboundIds: number[] = [];
 
       for (const target of rawTargets) {
@@ -587,11 +731,6 @@ class XuiClient {
 
         if (matchedInbound) {
           resolvedInboundIds.push(Number(matchedInbound.id));
-        } else {
-          // Fall back to target value if it represents a direct numeric ID
-          if (!isNaN(targetNum)) {
-            resolvedInboundIds.push(targetNum);
-          }
         }
       }
 
@@ -599,11 +738,13 @@ class XuiClient {
       resolvedInboundIds = Array.from(new Set(resolvedInboundIds));
 
       if (resolvedInboundIds.length === 0) {
-        const availableInboundsInfo = inboundsList
-          .map(ib => `[ID: ${ib.id}, Remark: ${ib.remark || 'ندارد'}, Port: ${ib.port}, Protocol: ${ib.protocol}]`)
-          .join('\n');
-          
-        throw new Error(`مشخصات اینباند با برچسب یا شناسه (${rawTargets.join(', ')}) در پنل شما پیدا نشد. اینباندهای فعال در پنل شما:\n\n${availableInboundsInfo || 'هیچ اینباندی یافت نشد.'}\n\nلطفا نام، پورت، یا شناسه وارد شده را در بخش محصولات یا تنظیمات روبات بررسی کرده و تصحیح نمایید.`);
+        if (inboundsList.length > 0) {
+          const fallbackId = Number(inboundsList[0].id);
+          resolvedInboundIds.push(fallbackId);
+          console.log(`[X-UI] Fallback to first active inbound ID: ${fallbackId} as all requested inbounds were deleted/invalid.`);
+        } else {
+          throw new Error('هیچ اینباند فعالی در پنل شما پیدا نشد. لطفا حداقل یک اینباند در پنل ایجاد کنید.');
+        }
       }
 
       const primaryInboundId = resolvedInboundIds[0];

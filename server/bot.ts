@@ -995,22 +995,27 @@ export async function initBot() {
         return;
       }
       if (sessionType === 'search_user') {
-        const queryStr = text.trim().toLowerCase().replace(/^@/, '');
+        const queryCleaned = text.trim()
+          .replace(/[۰-۹]/g, d => String.fromCharCode(d.charCodeAt(0) - 1728))
+          .replace(/[٠-٩]/g, d => String.fromCharCode(d.charCodeAt(0) - 1632));
+        const queryStr = queryCleaned.toLowerCase().replace(/^@/, '');
         const matched = state.users.filter(u => {
           const uId = String(u.chatId);
           const uUsername = (u.username || '').toLowerCase();
-          return uId === queryStr || uUsername.includes(queryStr);
+          const uNickname = (u.nickname || '').toLowerCase();
+          return uId.includes(queryStr) || uUsername.includes(queryStr) || uNickname.includes(queryStr);
         });
 
         if (matched.length === 0) {
           bot!.sendMessage(chatId, '❌ هیچ کاربری منطبق با جستجوی شما یافت نشد.');
         } else {
-          bot!.sendMessage(chatId, `🔍 <b>نتایج جستجوی کاربر</b> (${matched.length}مورد یافت شد):`, { parse_mode: 'HTML' });
+          bot!.sendMessage(chatId, `🔍 <b>نتایج جستجوی کاربر</b> (${matched.length} مورد یافت شد):`, { parse_mode: 'HTML' });
           matched.forEach((u, i) => {
             const role = u.isSeller ? 'همکار فروشنده' : 'کاربر عادی';
             const msgText = `👤 <b>کاربر ${i+1}:</b>\n` +
               `🆔 شناسه: <code>${u.chatId}</code>\n` +
               `💬 یوزرنیم: ${u.username ? '@' + u.username : 'ندارد'}\n` +
+              `📝 نیک‌نیم: ${u.nickname || 'ثبت نشده'}\n` +
               `💰 موجودی: ${Math.floor(u.balance || 0).toLocaleString()} تومان\n` +
               `👥 زیرمجموعه‌ها: ${u.referralsMade || 0} نفر\n` +
               `⚡ نقش: <b>${role}</b>\n` +
@@ -1024,6 +1029,9 @@ export async function initBot() {
               [
                 { text: '🔄 تغییر نقش', callback_data: `toggle_role_${u.chatId}` },
                 { text: '🗑 حذف اکانت', callback_data: `del_user_${u.chatId}` }
+              ],
+              [
+                { text: '💬 ارسال پیام مستقیم', callback_data: `send_msg_user_${u.chatId}` }
               ]
             ];
             bot!.sendMessage(chatId, msgText, { 
@@ -1154,6 +1162,32 @@ export async function initBot() {
         sendProductsMenu(chatId);
         return;
       }
+      if (sessionType.startsWith('send_direct_message_to_')) {
+        const targetIdStr = sessionType.replace('send_direct_message_to_', '');
+        const targetId = parseInt(targetIdStr);
+        adminSession.delete(chatId);
+
+        if (isNaN(targetId)) {
+          bot!.sendMessage(chatId, '❌ شناسه کاربر نامعتبر است.');
+          return;
+        }
+
+        const targetUser = db.getUser(targetId);
+        if (!targetUser) {
+          bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
+          return;
+        }
+
+        const adminMessage = `🔔 <b>پیام جدید از مدیریت:</b>\n\n${text}`;
+        bot!.sendMessage(targetId, adminMessage, { parse_mode: 'HTML' })
+          .then(() => {
+            bot!.sendMessage(chatId, `✅ پیام شما با موفقیت برای کاربر <code>${targetId}</code> ارسال شد.`, { parse_mode: 'HTML' });
+          })
+          .catch((e: any) => {
+            bot!.sendMessage(chatId, `❌ خطا در ارسال پیام به کاربر: ${e.message}`);
+          });
+        return;
+      }
       if (sessionType.startsWith('charge_direct_')) {
         const targetUid = parseInt(sessionType.replace('charge_direct_', ''));
         const amount = parseInt(text.trim());
@@ -1166,6 +1200,18 @@ export async function initBot() {
               db.saveUser(targetUser);
               checkPaygReactivation(targetUser).catch(console.error);
               bot!.sendMessage(chatId, `✅ موجودی کاربر با موفقیت مبلغ ${amount.toLocaleString()} تومان افزایش یافت.`);
+
+              const manualChargeMsg = `🎉 <b>حساب کاربری شما توسط مدیریت مبلغ ${amount.toLocaleString()} تومان شارژ شد!</b>\n\n` +
+                `💰 موجودی جدید حساب شما: <b>${targetUser.balance.toLocaleString()}</b> تومان\n\n` +
+                `🛒 <b>هم‌اکنون با زدن دکمه زیر می‌توانید محصول یا سرویس مورد نظر خود را خریداری کنید:</b>`;
+              bot!.sendMessage(targetUid, manualChargeMsg, { 
+                parse_mode: 'HTML',
+                reply_markup: {
+                  inline_keyboard: [
+                    [{ text: '🛍 خرید و ثبت سفارش', callback_data: 'buy_service_now' }]
+                  ]
+                }
+              }).catch(() => {});
            }
         }
         adminSession.delete(chatId);
@@ -1222,7 +1268,19 @@ export async function initBot() {
         db.saveUser(targetUser);
         checkPaygReactivation(targetUser).catch(console.error);
         bot!.sendMessage(chatId, `✅ حساب کاربر 👤 ${targetUser.username ? '@' + targetUser.username : targetUser.chatId} به مقدار *${amount.toLocaleString()}* تومان شارژ دسترسی یافت.`, { parse_mode: 'Markdown' });
-        bot!.sendMessage(targetUser.chatId, `🎉 حساب کاربری شما توسط مدیریت به مبلغ *${amount.toLocaleString()}* تومان شارژ شد!`, { parse_mode: 'Markdown' }).catch(() => {});
+        
+        const chargeNotifyMsg = `🎉 <b>حساب کاربری شما توسط مدیریت مبلغ ${amount.toLocaleString()} تومان شارژ شد!</b>\n\n` +
+          `💰 موجودی جدید حساب شما: <b>${targetUser.balance.toLocaleString()}</b> تومان\n\n` +
+          `🛒 <b>هم‌اکنون با زدن دکمه زیر می‌توانید محصول یا سرویس مورد نظر خود را خریداری کنید:</b>`;
+        bot!.sendMessage(targetUser.chatId, chargeNotifyMsg, { 
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🛍 خرید و ثبت سفارش', callback_data: 'buy_service_now' }]
+            ]
+          }
+        }).catch(() => {});
+
         sendUsersMenu(chatId);
         return;
       }
@@ -1757,7 +1815,17 @@ export async function initBot() {
             bot!.sendMessage(chatId, `✅ فیش واریزی کاربر \`${targetChatId}\` تایید شد. مبلغ *${amount.toLocaleString()}* تومان به حساب ایشان اضافه شد.`, { parse_mode: 'Markdown' });
             
             // Notify the user
-            bot!.sendMessage(targetChatId, `🎉 رسید پرداخت شما به مبلغ *${amount.toLocaleString()}* تومان توسط مدیریت تایید شد!\n\n💰 موجودی جدید شما: *${targetUser.balance.toLocaleString()}* تومان`, { parse_mode: 'Markdown' }).catch(() => {});
+            const notifyMsg = `🎉 <b>رسید پرداخت شما به مبلغ ${amount.toLocaleString()} تومان تایید شد!</b>\n\n` +
+              `💰 موجودی جدید حساب شما: <b>${targetUser.balance.toLocaleString()}</b> تومان\n\n` +
+              `🛒 <b>هم‌اکنون با زدن دکمه زیر می‌توانید محصول یا سرویس مورد نظر خود را خریداری کنید:</b>`;
+            bot!.sendMessage(targetChatId, notifyMsg, { 
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: '🛍 خرید و ثبت سفارش', callback_data: 'buy_service_now' }]
+                ]
+              }
+            }).catch(e => console.error("Failed to notify user on payment approval:", e.message));
           } else {
             bot!.sendMessage(chatId, '❌ کاربر مورد نظر یافت نشد.');
           }
@@ -2277,6 +2345,54 @@ export async function initBot() {
         state.users = state.users.filter(user => user.chatId !== uid);
         db.updateState({ users: state.users });
         bot!.sendMessage(chatId, `🗑 کاربر با آیدی ${uid} با موفقیت از دیتابیس ربات حذف شد.`);
+      }
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data && data.startsWith('send_msg_user_')) {
+      if (isAdmin) {
+        const targetId = data.replace('send_msg_user_', '');
+        adminSession.set(chatId, `send_direct_message_to_${targetId}`);
+        bot!.sendMessage(chatId, `✍️ لطفاً پیام خود را برای ارسال مستقیم به کاربر \`${targetId}\` بنویسید و ارسال کنید:`);
+      }
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'buy_service_now') {
+      const activeProducts = state.products.filter(p => !p.disabled);
+      if (activeProducts.length === 0) {
+        bot!.sendMessage(chatId, '❌ هیچ محصولی موجود نیست.');
+        bot!.answerCallbackQuery(query.id);
+        return;
+      }
+
+      const activeCategories = (state.categories || []).filter(c => !c.disabled);
+
+      if (activeCategories.length > 0) {
+        const inlineKeyboard = activeCategories.map(c => ([
+          { text: `📁 ${c.name}`, callback_data: `show_category_${c.id}` }
+        ]));
+        if (activeProducts.some(p => !p.categoryId)) {
+          inlineKeyboard.push([{ text: `📁 سایر محصولات`, callback_data: `show_category_uncategorized` }]);
+        }
+        bot!.sendMessage(chatId, '🛍 لطفا دسته‌بندی محصول را انتخاب کنید:', {
+           parse_mode: 'Markdown',
+           reply_markup: {
+             inline_keyboard: inlineKeyboard
+           }
+        });
+      } else {
+        const inlineKeyboard = activeProducts.map(p => ([
+          { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
+        ]));
+
+        bot!.sendMessage(chatId, '🛍 لطفا یک محصول انتخاب کنید:', {
+           reply_markup: {
+             inline_keyboard: inlineKeyboard
+           }
+        });
       }
       bot!.answerCallbackQuery(query.id);
       return;
