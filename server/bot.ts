@@ -16,6 +16,52 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;');
 }
 
+function normalizePersianText(str: string): string {
+  if (!str) return '';
+  return str.toLowerCase()
+    .replace(/ی/g, 'ي')
+    .replace(/ک/g, 'ك')
+    .replace(/‌/g, ' ') // zero-width non-joiner
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function getSellerDiscountForProduct(user: any, product: any): number {
+  if (!user || !user.isSeller) return 0;
+  let sellerDiscount = 0;
+  if (user.sellerDiscounts && user.sellerDiscounts.length > 0) {
+    const bestSpecific = user.sellerDiscounts
+      .filter((d: any) => 
+        (d.type === 'product' && d.targetId === product.id) ||
+        (d.type === 'category' && d.targetId === product.categoryId) ||
+        (d.type === 'global')
+      )
+      .sort((a: any, b: any) => b.percent - a.percent)[0];
+      
+    if (bestSpecific) {
+      sellerDiscount = bestSpecific.percent;
+    }
+  } else if (user.sellerDiscount) {
+    sellerDiscount = user.sellerDiscount; // legacy global
+  }
+  return sellerDiscount;
+}
+
+function getProductButtonText(user: any, p: any): string {
+  const isPayG = !!p.isPayAsYouGo;
+  const unit = isPayG ? 'تومان/گیگ' : 'تومان';
+  
+  if (user && user.isSeller) {
+    const sellerDiscount = getSellerDiscountForProduct(user, p);
+    if (sellerDiscount > 0) {
+      const finalPrice = Math.max(0, Math.round(p.price * (1 - sellerDiscount / 100)));
+      return `🎁 ${p.name} - ${finalPrice.toLocaleString()} (با %${sellerDiscount} تخفیف همکار) ${unit}`;
+    }
+  }
+
+  return `${p.name} - ${p.price.toLocaleString()} ${unit}`;
+}
+
 let bot: TelegramBot | null = null;
 let isPolling = false;
 const adminSession = new Map<number, string>();
@@ -314,7 +360,10 @@ export async function initBot() {
         subUrl: client.subUrl,
         volumeGb: volGb,
         durationDays: durDays,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        originalPrice: product.price,
+        discountPercent: effectiveDiscount,
+        discountAmount: product.price - finalPrice
       };
 
       if (isPAYG) {
@@ -343,16 +392,21 @@ export async function initBot() {
         }
       }
 
-      let finalMsg = `✅ خرید با موفقیت انجام شد!\n\n📦 ${product.name}\n`;
-      if (user.isSeller) {
-         finalMsg += `📉 بدهی جدید شما: ${(user.debt || 0).toLocaleString()} تومان\n\n`;
+      let finalMsg = `✅ <b>خرید با موفقیت انجام شد!</b>\n\n📦 <b>سرویس:</b> ${product.name}\n`;
+      if (effectiveDiscount > 0) {
+        finalMsg += `💵 <b>قیمت اصلی:</b> ${product.price.toLocaleString()} تومان\n` +
+                    `🏷️ <b>تخفیف اعمال شده:</b> ${effectiveDiscount}٪ (${(product.price - finalPrice).toLocaleString()} تومان)\n` +
+                    `💰 <b>قیمت نهایی پرداخت شده:</b> ${finalPrice.toLocaleString()} تومان\n\n`;
       } else {
-         finalMsg += `💰 موجودی جدید: ${user.balance.toLocaleString()} تومان\n\n`;
+        finalMsg += `💰 <b>قیمت پرداختی:</b> ${finalPrice.toLocaleString()} تومان\n\n`;
       }
-      if (appliedCoupon) {
-         finalMsg += `🎫 تخفیف اعمال شده: %${appliedCoupon.discountPercent}\n💰 مبلغ نهایی کسر شده: ${finalPrice.toLocaleString()} تومان\n\n`;
+
+      if (user.isSeller) {
+         finalMsg += `📉 <b>بدهی جدید شما:</b> ${(user.debt || 0).toLocaleString()} تومان\n\n`;
+      } else {
+         finalMsg += `💰 <b>موجودی جدید:</b> ${user.balance.toLocaleString()} تومان\n\n`;
       }
-      bot!.sendMessage(chatId, finalMsg, { parse_mode: 'Markdown' });
+      bot!.sendMessage(chatId, finalMsg, { parse_mode: 'HTML' });
       await sendServiceInfo(chatId, newPurchase);
     } catch (err: any) {
       bot!.sendMessage(chatId, `❌ ساخت کانفیگ شکست خورد: ${err.message}`);
@@ -998,11 +1052,11 @@ export async function initBot() {
         const queryCleaned = text.trim()
           .replace(/[۰-۹]/g, d => String.fromCharCode(d.charCodeAt(0) - 1728))
           .replace(/[٠-٩]/g, d => String.fromCharCode(d.charCodeAt(0) - 1632));
-        const queryStr = queryCleaned.toLowerCase().replace(/^@/, '');
+        const queryStr = normalizePersianText(queryCleaned.replace(/^@/, ''));
         const matched = state.users.filter(u => {
           const uId = String(u.chatId);
-          const uUsername = (u.username || '').toLowerCase();
-          const uNickname = (u.nickname || '').toLowerCase();
+          const uUsername = normalizePersianText(u.username || '');
+          const uNickname = normalizePersianText(u.nickname || '');
           return uId.includes(queryStr) || uUsername.includes(queryStr) || uNickname.includes(queryStr);
         });
 
@@ -1605,7 +1659,7 @@ export async function initBot() {
       }
 
       const inlineKeyboard = activeProducts.map(p => ([
-        { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
+        { text: getProductButtonText(user, p), callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, '🛒 *خرید سرویس ویژه همکاران*:\nلطفا یکی از پکیج‌های زیر را جهت ساخت اتوماتیک انتخاب کنید:', {
@@ -1686,8 +1740,9 @@ export async function initBot() {
         return;
       }
 
+      const userObj = db.getUser(chatId);
       const inlineKeyboard = activeProducts.map(p => ([
-        { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
+        { text: getProductButtonText(userObj, p), callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, '🛍 لطفا یک محصول انتخاب کنید:', {
@@ -2385,7 +2440,7 @@ export async function initBot() {
         });
       } else {
         const inlineKeyboard = activeProducts.map(p => ([
-          { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
+          { text: getProductButtonText(user, p), callback_data: `buy_${p.id}` }
         ]));
 
         bot!.sendMessage(chatId, '🛍 لطفا یک محصول انتخاب کنید:', {
@@ -2415,7 +2470,7 @@ export async function initBot() {
       }
 
       const inlineKeyboard = filteredProducts.map(p => ([
-        { text: `${p.name} - ${p.price.toLocaleString()} ${p.isPayAsYouGo ? 'تومان/گیگ' : 'تومان'}`, callback_data: `buy_${p.id}` }
+        { text: getProductButtonText(user, p), callback_data: `buy_${p.id}` }
       ]));
 
       bot!.sendMessage(chatId, isSeller ? '🛒 *خرید سرویس ویژه همکاران*:\nلطفا یکی از پکیج‌های زیر را جهت ساخت اتوماتیک انتخاب کنید:' : '🛍 لطفا یک محصول انتخاب کنید:', {
@@ -2438,10 +2493,22 @@ export async function initBot() {
         return;
       }
 
+      let confirmMsg = `🛍 <b>تایید خرید: ${product.name}</b>\n\n`;
+      const sellerDiscount = getSellerDiscountForProduct(user, product);
+      if (sellerDiscount > 0) {
+        const finalPrice = Math.max(0, Math.round(product.price * (1 - sellerDiscount / 100)));
+        confirmMsg += `💵 قیمت اصلی: <s>${product.price.toLocaleString()}</s> تومان\n` +
+                      `🎁 تخفیف اختصاصی همکار: <b>${sellerDiscount}٪</b> (${(product.price - finalPrice).toLocaleString()} تومان)\n` +
+                      `💰 قیمت نهایی شما: <b>${finalPrice.toLocaleString()}</b> تومان\n\n`;
+      } else {
+        confirmMsg += `💰 قیمت سرویس: <b>${product.price.toLocaleString()}</b> تومان\n\n`;
+      }
+
       const couponsList = state.coupons || [];
-      if (couponsList.length > 0) {
-        bot!.sendMessage(chatId, `🛍 *تایید خرید: ${product.name}*\n💰 قیمت سرویس: *${product.price.toLocaleString()}* تومان\n\n🎫 آیا مایل هستید جهت پرداخت از *کد تخفیف* استفاده کنید؟`, {
-          parse_mode: 'Markdown',
+      if (couponsList.length > 0 && !user.isSeller) {
+        confirmMsg += `🎫 آیا مایل هستید جهت پرداخت از <b>کد تخفیف</b> استفاده کنید؟`;
+        bot!.sendMessage(chatId, confirmMsg, {
+          parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
               [
@@ -2453,7 +2520,17 @@ export async function initBot() {
           }
         });
       } else {
-        await executePurchase(chatId, product, undefined);
+        bot!.sendMessage(chatId, confirmMsg + `⚠️ آیا از خرید و فعالسازی این سرویس اطمینان دارید؟`, {
+          parse_mode: 'HTML',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '✅ بله، خرید انجام شود', callback_data: `buy_now_${productId}` },
+                { text: '❌ خیر، انصراف', callback_data: 'cancel_purchase' }
+              ]
+            ]
+          }
+        });
       }
       bot!.answerCallbackQuery(query.id);
       return;
@@ -2612,7 +2689,11 @@ export async function initBot() {
                   const mbLeft = ((total - used) / (1024 * 1024));
                   if (mbLeft > 0 && mbLeft < 1000) { // < 1GB limit
                       if (!purchase.warnedData) {
-                          bot!.sendMessage(user.chatId, `⚠️ مشترک گرامی،\nحجم باقی‌مانده سرویس "${purchase.name}" شما کمتر از ۱ گیگابایت می‌باشد.`);
+                          bot!.sendMessage(user.chatId, `⚠️ <b>هشدار اتمام حجم سرویس</b>\n\n` +
+                            `📦 <b>نام سرویس:</b> ${purchase.name}\n` +
+                            `🆔 <b>شناسه کانفیگ:</b> <code>${purchase.id}</code>\n\n` +
+                            `🔗 <b>لینک اشتراک شما:</b>\n<code>${purchase.subUrl}</code>\n\n` +
+                            `💡 حجم باقی‌مانده این سرویس کمتر از ۱ گیگابایت می‌باشد. لطفا جهت تمدید اعتبار آن اقدام کنید.`, { parse_mode: 'HTML' });
                           purchase.warnedData = true;
                           userChanged = true;
                       }
@@ -2628,7 +2709,11 @@ export async function initBot() {
                   const hoursLeft = (expiry - now) / (1000 * 60 * 60);
                   if (hoursLeft > 0 && hoursLeft < 24) {
                       if (!purchase.warnedTime) {
-                          bot!.sendMessage(user.chatId, `⚠️ مشترک گرامی،\nکمتر از ۲۴ ساعت به پایان اعتبار سرویس "${purchase.name}" شما باقی مانده است.`);
+                          bot!.sendMessage(user.chatId, `⚠️ <b>هشدار اتمام زمان سرویس</b>\n\n` +
+                            `📦 <b>نام سرویس:</b> ${purchase.name}\n` +
+                            `🆔 <b>شناسه کانفیگ:</b> <code>${purchase.id}</code>\n\n` +
+                            `🔗 <b>لینک اشتراک شما:</b>\n<code>${purchase.subUrl}</code>\n\n` +
+                            `💡 کمتر از ۲۴ ساعت به پایان اعتبار زمانی این سرویس باقی مانده است. لطفا جهت تمدید اعتبار آن اقدام کنید.`, { parse_mode: 'HTML' });
                           purchase.warnedTime = true;
                           userChanged = true;
                       }
@@ -2692,4 +2777,19 @@ export async function sendBroadcast(message: string) {
   }
 
   return { successCount, failCount };
+}
+
+export async function sendDirectMessage(chatId: number, text: string, replyMarkup?: any) {
+  if (!bot) {
+    console.error('[Bot Error] Cannot send direct message, bot is not initialized.');
+    return;
+  }
+  try {
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'HTML',
+      reply_markup: replyMarkup
+    });
+  } catch (err: any) {
+    console.error(`[Bot Error] Failed to send direct message to ${chatId}:`, err.message);
+  }
 }

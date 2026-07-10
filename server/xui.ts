@@ -539,7 +539,7 @@ class XuiClient {
     }
   }
 
-  private selfHealProductsAndInbounds(inboundsList: any[]) {
+  public selfHealProductsAndInbounds(inboundsList: any[]) {
     if (!inboundsList || inboundsList.length === 0) return;
     try {
       const state = db.getState();

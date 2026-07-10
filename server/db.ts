@@ -52,6 +52,9 @@ export interface Purchase {
   warnedPayg?: boolean;
   warnedData?: boolean;
   warnedTime?: boolean;
+  originalPrice?: number;
+  discountPercent?: number;
+  discountAmount?: number;
 }
 
 export interface User {
