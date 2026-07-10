@@ -6,7 +6,7 @@ import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { createServer as createViteServer } from "vite";
 import { db } from "./server/db.js";
-import { initBot, sendBroadcast, checkPaygReactivation } from "./server/bot.js";
+import { initBot, sendBroadcast, checkPaygReactivation, sendDirectMessage } from "./server/bot.js";
 import { xui } from "./server/xui.js";
 import { encryptData, decryptData } from "./server/crypto.js";
 
@@ -163,7 +163,9 @@ async function startServer() {
   api.get("/xui-inbounds", async (req, res) => {
     try {
       const inbounds = await xui.getInbounds();
-      // If it returns empty, it's either empty or failed (but handled gracefully now)
+      if (inbounds && inbounds.length > 0) {
+        xui.selfHealProductsAndInbounds(inbounds);
+      }
       res.json({ success: true, inbounds: inbounds || [] });
     } catch (e: any) {
       // Still good to have a backup catch although xui.getInbounds now suppresses most errors
@@ -429,9 +431,21 @@ async function startServer() {
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
-    user.balance += parseInt(amount);
+    const parsedAmount = parseInt(amount);
+    user.balance += parsedAmount;
     db.saveUser(user);
     checkPaygReactivation(user).catch(console.error);
+
+    // Notify user of charge
+    const manualChargeMsg = `🎉 <b>حساب کاربری شما توسط مدیریت مبلغ ${parsedAmount.toLocaleString()} تومان شارژ شد!</b>\n\n` +
+      `💰 موجودی جدید حساب شما: <b>${user.balance.toLocaleString()}</b> تومان\n\n` +
+      `🛒 <b>هم‌اکنون با زدن دکمه زیر می‌توانید محصول یا سرویس مورد نظر خود را خریداری کنید:</b>`;
+    sendDirectMessage(user.chatId, manualChargeMsg, {
+      inline_keyboard: [
+        [{ text: '🛍 خرید و ثبت سفارش', callback_data: 'buy_service_now' }]
+      ]
+    }).catch(console.error);
+
     res.json({ success: true, balance: user.balance });
   });
 
