@@ -65,7 +65,7 @@ function getProductButtonText(user: any, p: any): string {
 let bot: TelegramBot | null = null;
 let isPolling = false;
 const adminSession = new Map<number, string>();
-const userSession = new Map<number, { action: string; amount?: number }>();
+const userSession = new Map<number, { action: string; amount?: number; productId?: string; couponCode?: string }>();
 const purchaseLocks = new Set<number>();
 // pendingPayments moved to db.getState().pendingPayments
 
@@ -225,20 +225,20 @@ export async function initBot() {
     console.error('[Bot Error] Exception thrown during Bot creation:', err.message || err);
   }
 
-  async function executePurchase(chatId: number, product: any, couponCode?: string) {
+  async function executePurchase(chatId: number, product: any, couponCode?: string, customName?: string) {
     if (purchaseLocks.has(chatId)) {
       bot!.sendMessage(chatId, '⏳ در حال پردازش درخواست خرید قبلی شما، لطفا صبر کنید...');
       return;
     }
     purchaseLocks.add(chatId);
     try {
-      await _executePurchaseInternal(chatId, product, couponCode);
+      await _executePurchaseInternal(chatId, product, couponCode, customName);
     } finally {
       purchaseLocks.delete(chatId);
     }
   }
 
-  async function _executePurchaseInternal(chatId: number, product: any, couponCode?: string) {
+  async function _executePurchaseInternal(chatId: number, product: any, couponCode?: string, customName?: string) {
     const user = db.getUser(chatId);
     if (!user) return;
     const state = db.getState();
@@ -337,10 +337,15 @@ export async function initBot() {
       const volGb = isPAYG ? 0 : (product.volumeGb !== undefined ? Number(product.volumeGb) : 0);
       const durDays = isPAYG ? 0 : (product.durationDays !== undefined ? Number(product.durationDays) : 0);
 
-      const cleanUsername = user.username ? user.username.trim().replace(/[^a-zA-Z0-9_]/g, '') : '';
-      const emailPrefix = cleanUsername || String(chatId);
-      const uniqueSuffix = Date.now().toString().slice(-6);
-      const clientEmail = `${emailPrefix}_${uniqueSuffix}`;
+      let clientEmail = '';
+      if (customName) {
+        clientEmail = customName;
+      } else {
+        const cleanUsername = user.username ? user.username.trim().replace(/[^a-zA-Z0-9_]/g, '') : '';
+        const emailPrefix = cleanUsername || String(chatId);
+        const uniqueSuffix = Date.now().toString().slice(-6);
+        clientEmail = `${emailPrefix}_${uniqueSuffix}`;
+      }
 
       const client = await xui.addClient(clientEmail, volGb, durDays, selectedInboundIds, product.limitIp || 0, String(chatId), sellerGroupName);
       
@@ -806,6 +811,42 @@ export async function initBot() {
         `پس از انجام واریز کارت به کارت، لطفا *عکس رسید پرداخت (فیش واریزی)* خود را به صورت عکس به همین گفتگو بفرستید تا سریعاً توسط مدیریت تایید و حسابتان شارژ شود.`;
 
       bot!.sendMessage(chatId, paymentInstructions, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (userSg && userSg.action === 'awaiting_custom_config_name' && text && !text.startsWith('/')) {
+      const { productId, couponCode } = userSg;
+      
+      const customName = text.trim();
+      if (!/^[a-zA-Z0-9_-]+$/.test(customName)) {
+        bot!.sendMessage(chatId, '❌ نام وارد شده معتبر نیست. لطفاً فقط از حروف انگلیسی، اعداد، خط تیره (-) و زیرخط (_) استفاده کنید و فاصله نگذارید:');
+        return; 
+      }
+
+      let isDuplicate = false;
+      const allUsers = state.users;
+      for (const u of allUsers) {
+        if (u.purchases && u.purchases.some((p: any) => p.id.toLowerCase() === customName.toLowerCase())) {
+          isDuplicate = true;
+          break;
+        }
+      }
+      
+      if (isDuplicate) {
+        bot!.sendMessage(chatId, '❌ هشدار: این نام تکراری است و قبلاً ثبت شده است! لطفاً یک نام دیگر انتخاب کنید:');
+        return; 
+      }
+
+      userSession.delete(chatId);
+      const product = state.products.find(p => p.id === productId);
+      if (!product) {
+        bot!.sendMessage(chatId, '❌ محصول پیدا نشد.');
+        return;
+      }
+
+      executePurchase(chatId, product, couponCode, customName).catch(e => {
+        console.error('[Purchase Error]', e);
+      });
       return;
     }
 
@@ -2563,7 +2604,51 @@ export async function initBot() {
         return;
       }
 
-      await executePurchase(chatId, product, couponCode);
+      userSession.set(chatId, { action: 'awaiting_config_name', productId, couponCode });
+      bot!.sendMessage(chatId, '📝 <b>انتخاب نام کانفیگ</b>\n\nآیا مایلید نام کانفیگ (Client Email) به صورت تصادفی تولید شود یا نام دلخواه خود را وارد می‌کنید؟\n<i>توجه: در صورت انتخاب نام دلخواه، باید نامی منحصر به فرد وارد کنید.</i>', {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🎲 تولید نام تصادفی', callback_data: 'config_name_random' }],
+            [{ text: '✏️ وارد کردن نام دلخواه', callback_data: 'config_name_custom' }],
+            [{ text: '❌ انصراف', callback_data: 'cancel_purchase' }]
+          ]
+        }
+      });
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'config_name_random') {
+      const session = userSession.get(chatId);
+      if (!session || session.action !== 'awaiting_config_name' || !session.productId) {
+        bot!.sendMessage(chatId, '❌ نشست منقضی شده است. لطفا دوباره تلاش کنید.');
+        bot!.answerCallbackQuery(query.id);
+        return;
+      }
+      const product = state.products.find(p => p.id === session.productId);
+      if (!product) return;
+      userSession.delete(chatId);
+      await executePurchase(chatId, product, session.couponCode);
+      bot!.answerCallbackQuery(query.id);
+      return;
+    }
+
+    if (data === 'config_name_custom') {
+      const session = userSession.get(chatId);
+      if (!session || session.action !== 'awaiting_config_name' || !session.productId) {
+        bot!.sendMessage(chatId, '❌ نشست منقضی شده است. لطفا دوباره تلاش کنید.');
+        bot!.answerCallbackQuery(query.id);
+        return;
+      }
+      userSession.set(chatId, { ...session, action: 'awaiting_custom_config_name' });
+      bot!.sendMessage(chatId, '✏️ لطفا نام دلخواه خود را (فقط حروف انگلیسی، اعداد و خط تیره/زیرخط) بدون فاصله ارسال کنید:', {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '❌ انصراف', callback_data: 'cancel_purchase' }]
+          ]
+        }
+      });
       bot!.answerCallbackQuery(query.id);
       return;
     }
@@ -2682,6 +2767,53 @@ export async function initBot() {
                               purchase.warnedPayg = false;
                           }
                       }
+                  }
+              }
+
+              const isVolumeExpired = total > 0 && used >= total;
+              const isTimeExpired = expiry > 0 && now >= expiry;
+
+              if (isVolumeExpired || isTimeExpired) {
+                  if (!purchase.expiredAt) {
+                      purchase.expiredAt = now;
+                      userChanged = true;
+                  } else {
+                      const daysExpired = (now - purchase.expiredAt) / (1000 * 60 * 60 * 24);
+                      if (daysExpired >= 7) {
+                          try {
+                              let ibId: number | undefined;
+                              let cUuid: string | undefined;
+                              for (const ib of inboundsList) {
+                                  if (ib.settings) {
+                                      const p = typeof ib.settings === 'string' ? JSON.parse(ib.settings) : ib.settings;
+                                      if (p && p.clients) {
+                                          const clientObj = p.clients.find((cl: any) => cl.email === c.email);
+                                          if (clientObj) {
+                                              ibId = ib.id;
+                                              cUuid = clientObj.id;
+                                              break;
+                                          }
+                                      }
+                                  }
+                              }
+                              if (ibId && cUuid) {
+                                  await xui.delClient(ibId, cUuid);
+                                  bot!.sendMessage(user.chatId, `🗑 <b>حذف سرویس منقضی شده</b>\n\nسرویس <b>${purchase.name}</b> (نام کانفیگ: <code>${purchase.id}</code>) به دلیل گذشت یک هفته از زمان انقضای آن، برای همیشه از سرور حذف گردید.`, { parse_mode: 'HTML' });
+                                  
+                                  // remove from user.purchases
+                                  user.purchases = user.purchases.filter((p: any) => p.id !== purchase.id);
+                                  userChanged = true;
+                                  continue; // Skip further warnings for this deleted config
+                              }
+                          } catch (e: any) {
+                              console.error('[Bot] Failed to delete expired config:', e.message);
+                          }
+                      }
+                  }
+              } else {
+                  if (purchase.expiredAt) {
+                      purchase.expiredAt = undefined;
+                      userChanged = true;
                   }
               }
 

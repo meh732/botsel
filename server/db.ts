@@ -55,6 +55,7 @@ export interface Purchase {
   originalPrice?: number;
   discountPercent?: number;
   discountAmount?: number;
+  expiredAt?: number;
 }
 
 export interface User {
